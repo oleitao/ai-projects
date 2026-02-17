@@ -1,0 +1,29 @@
+{
+  "negative": {
+    "summary": "Os comentários mencionam conveniência, aceitação variável e taxas; há elogios e queixas.",
+    "key_points": [
+      "Conveniência e segurança do Apple Pay",
+      "Aceitação desigual entre países/lojas",
+      "Taxas elevadas impedem adoção",
+      "Elogios a iniciativas técnicas e laboratoriais"
+    ]
+  },
+  "neutral": {
+    "summary": "Os comentários mencionam conveniência, aceitação variável e taxas; há elogios e queixas.",
+    "key_points": [
+      "Conveniência e segurança do Apple Pay",
+      "Aceitação desigual entre países/lojas",
+      "Taxas elevadas impedem adoção",
+      "Elogios a iniciativas técnicas e laboratoriais"
+    ]
+  },
+  "positive": {
+    "summary": "Os comentários mencionam conveniência, aceitação variável e taxas; há elogios e queixas.",
+    "key_points": [
+      "Conveniência e segurança do Apple Pay",
+      "Aceitação desigual entre países/lojas",
+      "Taxas elevadas impedem adoção",
+      "Elogios a iniciativas técnicas e laboratoriais"
+    ]
+  }
+}
