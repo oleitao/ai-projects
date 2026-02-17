@@ -1,0 +1,23 @@
+:root {
+  --iac-code-bg: rgba(13, 110, 253, 0.08);
+}
+
+code,
+.font-monospace {
+  font-size: 0.95em;
+}
+
+code {
+  padding: 0.12rem 0.35rem;
+  border-radius: 0.35rem;
+  background: var(--iac-code-bg);
+}
+
+#answer {
+  white-space: pre-wrap;
+}
+
+.iac-snippet {
+  white-space: pre-wrap;
+}
+
