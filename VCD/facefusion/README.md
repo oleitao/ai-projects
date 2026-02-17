@@ -1,28 +1,28 @@
-AI Engineer Academy
+AI Project
 ====================
 
-## Projeto: VCD/facefusion
+## Project: VCD/facefusion
 
-Este projeto utiliza o FaceFusion (versão Docker em `VCD/facefusion`) para realizar face swap em imagem e vídeo.
+This project uses FaceFusion (Docker version in `VCD/facefusion`) to perform face swaps on images and videos.
 
-### Origens
-- Imagem alvo: `.faces/target/LM.jpg`
-- Vídeo alvo: `.faces/target/hd-movie.mp4`
+### Sources
+- Target image: `.faces/target/LM.jpg`
+- Target video: `.faces/target/hd-movie.mp4`
 
-### Resultados
-- Imagem resultante: `.faces/output_images/LM_swap.jpg`
-- Vídeo resultante: `.faces/output_videos/hd-movie_swap.mp4`
+### Results
+- Output image: `.faces/output_images/LM_swap.jpg`
+- Output video: `.faces/output_videos/hd-movie_swap.mp4`
 
-### Visualização no GitHub
+### GitHub Preview
 
-#### Imagem alvo
-![Imagem alvo](.faces/target/LM.jpg)
+#### Target image
+![Target image](.faces/target/LM.jpg)
 
-#### Imagem resultante (face swap)
-![Imagem resultante](.faces/output_images/LM_swap.jpg)
+#### Output image (face swap)
+![Output image](.faces/output_images/LM_swap.jpg)
 
-#### Vídeo alvo
-[![Ver vídeo de face swap](tmp/hd-movie.png)](.faces/output_videos/hd-movie.mp4)
+#### Target video
+[![Watch face swap video](tmp/hd-movie.png)](.faces/output_videos/hd-movie.mp4)
 
-#### Vídeo resultante (face swap)
-[![Ver vídeo de face swap](tmp/hd-movie_swap.png)](.faces/output_videos/hd-movie_swap.mp4)
+#### Output video (face swap)
+[![Watch face swap video](tmp/hd-movie_swap.png)](.faces/output_videos/hd-movie_swap.mp4)
