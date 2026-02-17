@@ -1,0 +1,206 @@
+{% extends "ragapp/base.html" %}
+{% block title %}Ingestão · IAC RAG{% endblock %}
+{% block content %}
+  <div class="row g-4">
+    <div class="col-12 col-lg-6">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h1 class="h5 mb-3">Upload de PDF</h1>
+          <form id="pdfForm">
+            <div class="mb-3">
+              <label class="form-label">PDF</label>
+              <input class="form-control" type="file" name="file" accept="application/pdf" required />
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Tags</label>
+              <input class="form-control" type="text" name="tags" placeholder="ex.: receitas, vegetariano" />
+              <div class="form-text">Separadas por vírgula.</div>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+              <button class="btn btn-primary" type="submit" id="pdfBtn">Ingerir PDF</button>
+              <div id="pdfMsg" class="small text-muted"></div>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-lg-6">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h2 class="h5 mb-3">Ingestão por URL</h2>
+          <form id="urlForm">
+            <div class="mb-3">
+              <label class="form-label">URL</label>
+              <input class="form-control" type="text" name="url" placeholder="https://…" required />
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Tags</label>
+              <input class="form-control" type="text" name="tags" placeholder="ex.: docs, culinária" />
+              <div class="form-text">Separadas por vírgula.</div>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+              <button class="btn btn-primary" type="submit" id="urlBtn">Ingerir URL</button>
+              <div id="urlMsg" class="small text-muted"></div>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h2 class="h5 mb-2">Ingestão em lote</h2>
+          <p class="text-muted mb-3">
+            Usa por omissão <code>data-to-ingest/*.pdf</code> e <code>data-to-ingest/links.txt</code>.
+          </p>
+          <div class="d-flex align-items-center gap-2">
+            <button class="btn btn-outline-primary" id="batchBtn" type="button">Ingerir lote</button>
+            <div id="batchMsg" class="small text-muted"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-2">
+            <h2 class="h5 mb-0">Documentos</h2>
+            <div class="small text-muted">Atualiza automaticamente a cada 5s.</div>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm table-hover align-middle mb-0">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Título</th>
+          <th>Tipo</th>
+          <th>Estado</th>
+          <th>Tags</th>
+          <th>Fonte</th>
+        </tr>
+      </thead>
+      <tbody id="docsTbody">
+        {% for d in documents %}
+          <tr>
+            <td><code class="font-monospace">{{ d.id }}</code></td>
+            <td>{{ d.title|default:"(sem título)" }}</td>
+            <td><span class="badge text-bg-light border">{{ d.source_type }}</span></td>
+            <td>
+              {% if d.status == "done" %}
+                <span class="badge text-bg-success">{{ d.status }}</span>
+              {% elif d.status == "failed" %}
+                <span class="badge text-bg-danger">{{ d.status }}</span>
+              {% else %}
+                <span class="badge text-bg-secondary">{{ d.status }}</span>
+              {% endif %}
+              {% if d.error %}<div class="text-muted small mt-1">{{ d.error }}</div>{% endif %}
+            </td>
+            <td class="text-muted">{{ d.tags|join:", " }}</td>
+            <td class="text-muted text-truncate" style="max-width: 420px">{{ d.source_uri }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="6" class="text-muted">Sem documentos.</td></tr>
+        {% endfor %}
+      </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    async function refreshDocs() {
+      const r = await fetch("/api/documents");
+      if (!r.ok) return;
+      const data = await r.json();
+      const tbody = document.getElementById("docsTbody");
+      tbody.innerHTML = "";
+      for (const d of data.documents || []) {
+        const tr = document.createElement("tr");
+        const tags = (d.tags || []).join(", ");
+        const statusClass =
+          d.status === "done" ? "text-bg-success" : (d.status === "failed" ? "text-bg-danger" : "text-bg-secondary");
+        tr.innerHTML = `
+          <td><code class="font-monospace">${d.id}</code></td>
+          <td>${(d.title || "(sem título)")}</td>
+          <td><span class="badge text-bg-light border">${d.source_type}</span></td>
+          <td><span class="badge ${statusClass}">${d.status}</span>${d.error ? `<div class="text-muted small mt-1">${d.error}</div>` : ""}</td>
+          <td class="text-muted">${tags}</td>
+          <td class="text-muted text-truncate" style="max-width: 420px">${d.source_uri || ""}</td>
+        `;
+        tbody.appendChild(tr);
+      }
+    }
+
+    function setInlineMsg(el, kind, text) {
+      el.textContent = text || "";
+      el.classList.remove("text-muted", "text-success", "text-danger");
+      if (!text) {
+        el.classList.add("text-muted");
+        return;
+      }
+      if (kind === "ok") el.classList.add("text-success");
+      else if (kind === "err") el.classList.add("text-danger");
+      else el.classList.add("text-muted");
+    }
+
+    document.getElementById("pdfForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const msg = document.getElementById("pdfMsg");
+      const btn = document.getElementById("pdfBtn");
+      btn.disabled = true;
+      setInlineMsg(msg, "info", "A ingerir…");
+      const fd = new FormData(e.target);
+      const r = await fetch("/api/ingest/pdf", { method: "POST", body: fd });
+      const data = await r.json().catch(() => ({}));
+      setInlineMsg(msg, r.ok ? "ok" : "err", r.ok ? `OK: ${data.document_id}` : `Erro: ${data.error || r.status}`);
+      btn.disabled = false;
+      await refreshDocs();
+    });
+
+    document.getElementById("urlForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const msg = document.getElementById("urlMsg");
+      const btn = document.getElementById("urlBtn");
+      btn.disabled = true;
+      setInlineMsg(msg, "info", "A ingerir…");
+      const fd = new FormData(e.target);
+      const url = fd.get("url");
+      const tags = String(fd.get("tags") || "").split(",").map(t => t.trim()).filter(Boolean);
+      const r = await fetch("/api/ingest/url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, tags })
+      });
+      const data = await r.json().catch(() => ({}));
+      setInlineMsg(msg, r.ok ? "ok" : "err", r.ok ? `OK: ${data.document_id}` : `Erro: ${data.error || r.status}`);
+      btn.disabled = false;
+      await refreshDocs();
+    });
+
+    document.getElementById("batchBtn").addEventListener("click", async () => {
+      const msg = document.getElementById("batchMsg");
+      const btn = document.getElementById("batchBtn");
+      btn.disabled = true;
+      setInlineMsg(msg, "info", "A ingerir lote…");
+      const r = await fetch("/api/ingest/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+      const data = await r.json().catch(() => ({}));
+      setInlineMsg(msg, r.ok ? "ok" : "err", r.ok ? `OK: ${JSON.stringify(data)}` : `Erro: ${data.error || r.status}`);
+      btn.disabled = false;
+      await refreshDocs();
+    });
+
+    refreshDocs();
+    setInterval(refreshDocs, 5000);
+  </script>
+{% endblock scripts %}

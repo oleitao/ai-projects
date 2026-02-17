@@ -1,0 +1,43 @@
+{% extends "ragapp/base.html" %}
+{% block title %}Home · IAC RAG{% endblock %}
+{% block content %}
+  <div class="row g-4">
+    <div class="col-12 col-lg-7">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h1 class="h4 mb-2">Protótipo RAG</h1>
+          <p class="text-muted mb-3">Ingestão de PDFs/URLs e chat com citações.</p>
+
+          <div class="d-flex flex-wrap gap-2 mb-3">
+            <span class="badge text-bg-secondary">Documentos: {{ docs_count }}</span>
+            <span class="badge text-bg-success">Concluídos: {{ done_count }}</span>
+          </div>
+
+          <div class="d-flex flex-wrap gap-2">
+            <a class="btn btn-primary" href="{% url 'ingest' %}">Ingestão</a>
+            <a class="btn btn-outline-primary" href="{% url 'chat' %}">Abrir chat</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-lg-5">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h2 class="h6 text-uppercase text-muted mb-2">Atalhos</h2>
+          <div class="list-group list-group-flush">
+            <a class="list-group-item list-group-item-action" href="{% url 'ingest' %}">
+              Upload de PDF / URL
+            </a>
+            <a class="list-group-item list-group-item-action" href="{% url 'chat' %}">
+              Perguntar e ver citações
+            </a>
+            <a class="list-group-item list-group-item-action" href="/admin/">
+              Admin
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}

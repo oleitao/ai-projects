@@ -1,0 +1,125 @@
+{% extends "ragapp/base.html" %}
+{% block title %}Chat · IAC RAG{% endblock %}
+{% block content %}
+  <div class="row g-4">
+    <div class="col-12 col-lg-5">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h1 class="h5 mb-3">Pergunta</h1>
+          <div class="mb-3">
+            <label class="form-label">Questão</label>
+            <textarea class="form-control" id="question" rows="4" placeholder="Escreve a tua pergunta…"></textarea>
+          </div>
+
+          <div class="row g-3">
+            <div class="col-12">
+              <label class="form-label">Filtrar por documento</label>
+              <select class="form-select" id="docFilter">
+                <option value="">(sem filtro)</option>
+                {% for d in documents %}
+                  <option value="{{ d.id }}">{{ d.title|default:d.source_uri }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-12">
+              <label class="form-label">Tags</label>
+              <input class="form-control" type="text" id="tagFilter" placeholder="ex.: receitas" />
+              <div class="form-text">Separadas por vírgula (opcional).</div>
+            </div>
+          </div>
+
+          <div class="d-flex align-items-center gap-2 mt-3">
+            <button class="btn btn-primary" id="askBtn" type="button">Perguntar</button>
+            <div id="askMsg" class="small text-muted"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-lg-7">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center gap-2">
+            <h2 class="h5 mb-0">Resposta</h2>
+            <span id="busy" class="spinner-border spinner-border-sm text-primary d-none" role="status" aria-hidden="true"></span>
+          </div>
+          <hr class="my-3" />
+          <div id="answer" class="text-muted">—</div>
+        </div>
+      </div>
+
+      <div class="card shadow-sm mt-4">
+        <div class="card-body">
+          <h3 class="h6 text-uppercase text-muted mb-2">Citações</h3>
+          <ol id="citations" class="list-group list-group-numbered"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    let sessionId = null;
+
+    function setMsg(t) {
+      const el = document.getElementById("askMsg");
+      el.textContent = t || "";
+      el.classList.remove("text-muted", "text-success", "text-danger");
+      if (!t) el.classList.add("text-muted");
+      else if (String(t).startsWith("Erro")) el.classList.add("text-danger");
+      else if (t === "OK") el.classList.add("text-success");
+      else el.classList.add("text-muted");
+    }
+
+    document.getElementById("askBtn").addEventListener("click", async () => {
+      const q = document.getElementById("question").value.trim();
+      if (!q) return;
+      const btn = document.getElementById("askBtn");
+      const busy = document.getElementById("busy");
+      btn.disabled = true;
+      busy.classList.remove("d-none");
+      setMsg("A consultar…");
+      const docId = document.getElementById("docFilter").value;
+      const tags = document.getElementById("tagFilter").value.split(",").map(t => t.trim()).filter(Boolean);
+      const filters = {};
+      if (docId) filters.document_ids = [docId];
+      if (tags.length) filters.tags = tags;
+
+      const r = await fetch("/api/chat/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId, question: q, filters, top_k: 6 })
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setMsg(`Erro: ${data.error || r.status}`);
+        btn.disabled = false;
+        busy.classList.add("d-none");
+        return;
+      }
+      sessionId = data.session_id;
+      document.getElementById("answer").textContent = data.answer || "";
+
+      const ol = document.getElementById("citations");
+      ol.innerHTML = "";
+      for (const c of (data.citations || [])) {
+        const li = document.createElement("li");
+        const page = c.page ? ` p.${c.page}` : "";
+        li.className = "list-group-item";
+        li.innerHTML = `
+          <div class="d-flex flex-wrap gap-2 align-items-center">
+            <code class="font-monospace">${c.document_id}</code>
+            <span class="text-muted small">${page}</span>
+            <span class="text-muted small text-truncate" style="max-width: 520px">${c.source_uri || ""}</span>
+          </div>
+          <div class="iac-snippet text-muted small mt-2">${c.snippet || ""}</div>
+        `;
+        ol.appendChild(li);
+      }
+      setMsg("OK");
+      btn.disabled = false;
+      busy.classList.add("d-none");
+    });
+  </script>
+{% endblock scripts %}
