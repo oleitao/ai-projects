@@ -6,6 +6,7 @@ from pathlib import Path
 
 from infra_agents.agents.base import BaseAgent
 from infra_agents.contracts import AgentResult, InfrastructureSpec
+from infra_agents.llm import AgentLLM, LLMRequest, NoopLLM
 from infra_agents.rag import LocalKnowledgeBase
 from infra_agents.tools.filesystem import write_json, write_text
 
@@ -13,8 +14,13 @@ from infra_agents.tools.filesystem import write_json, write_text
 class RequirementsAgent(BaseAgent):
     name = "Requisitos"
 
-    def __init__(self, knowledge_base: LocalKnowledgeBase | None = None):
+    def __init__(
+        self,
+        knowledge_base: LocalKnowledgeBase | None = None,
+        llm: AgentLLM | None = None,
+    ):
         self.knowledge_base = knowledge_base or LocalKnowledgeBase()
+        self.llm = llm or NoopLLM()
 
     def run(self, state):  # type: ignore[override]
         assumptions: list[str] = []
@@ -26,10 +32,24 @@ class RequirementsAgent(BaseAgent):
         rag_sources = [hit.source for hit in rag_hits]
         rag_context = self.knowledge_base.render_context(rag_hits)
         payload = self._extract_json(prompt)
+        llm_used = False
 
         if payload is None:
-            payload = self._heuristic_spec(prompt)
-            assumptions.append("Spec inferida por heurísticas por não existir JSON explícito no prompt.")
+            llm_payload = self.llm.generate_structured(
+                LLMRequest(
+                    task="requirements_spec_v1",
+                    prompt=prompt,
+                    context=rag_context,
+                    schema_name="InfrastructureSpec",
+                )
+            )
+            if isinstance(llm_payload, dict) and llm_payload:
+                payload = llm_payload
+                llm_used = True
+                assumptions.append("Spec inferida via LLM estruturado com contexto RAG.")
+            else:
+                payload = self._heuristic_spec(prompt)
+                assumptions.append("Spec inferida por heurísticas por não existir JSON explícito no prompt.")
         if rag_sources:
             assumptions.append(f"Contexto RAG consultado: {', '.join(rag_sources)}.")
 
@@ -51,7 +71,7 @@ class RequirementsAgent(BaseAgent):
             artifacts=artifacts,
             findings=[],
             next_action="plan_architecture",
-            metadata={"assumptions": spec.assumptions, "rag_sources": rag_sources},
+            metadata={"assumptions": spec.assumptions, "rag_sources": rag_sources, "llm_used": llm_used},
         )
 
     def _extract_json(self, prompt: str) -> dict | None:

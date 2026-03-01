@@ -5,6 +5,7 @@ Plataforma de geração de Infrastructure as Code (Terraform) para AWS baseada e
 A aplicação recebe um prompt em linguagem natural, transforma-o numa `spec.json` estruturada, gera artefactos Terraform (`main.tf`, `variables.tf`, `outputs.tf`, `providers.tf`, `backend.tf`) e executa validações/políticas para entregar um resultado auditável (`summary.json` + relatórios).
 
 Inclui um RAG local (baseado em ficheiros Markdown em `infra_agents/knowledge/`) para melhorar consistência técnica nos agentes de `Requisitos`, `Planeador` e `Gerador`.
+Também inclui uma camada opcional de geração estruturada por LLM (`infra_agents/llm/`) preparada para fine-tuning incremental.
 
 O projeto suporta dois motores de orquestração:
 - `classic`: fluxo determinístico implementado em Python puro
@@ -65,9 +66,13 @@ O scaffold está adaptado para AWS com:
 - `infra_agents/orchestrator.py`: facade de seleção de engine
 - `infra_agents/orchestration/`: implementações `classic` e `langgraph`
 - `infra_agents/agents/`: agentes (`requirements`, `planner`, `generator`, `validator`, `security`, `cost`)
+- `infra_agents/llm/`: interface LLM, factory por ambiente e replay backend
 - `infra_agents/tools/`: wrappers para filesystem e comandos CLI
 - `infra_agents/knowledge/`: base local de referências/padrões
 - `examples/prompt.txt`: prompt de exemplo
+- `scripts/export_finetune_dataset.py`: exporta dataset JSONL a partir de jobs concluídos
+- `scripts/evaluate_requirements_agent.py`: avaliação offline do agente de requisitos
+- `datasets/README.md`: formato de dataset e fluxo de treino/avaliação
 - `tests/`: testes unitários e de pipeline
 
 ## Pré-requisitos
@@ -124,6 +129,105 @@ Parâmetros úteis:
 - `--max-iterations` (default: `3`)
 - `--execution-mode` (atual: apenas `plan-only`)
 - `--engine` (`auto`, `classic`, `langgraph`)
+
+## Fine-Tuning Readiness
+
+Esta implementação separa claramente:
+- lógica determinística crítica (validação, segurança, policy gates)
+- decisões de geração estruturada (onde fine-tuning pode ajudar)
+
+O fine-tuning deve atuar apenas nos hooks LLM dos agentes abaixo:
+- `RequirementsAgent` -> tarefa `requirements_spec_v1`
+- `ArchitecturePlannerAgent` -> tarefa `planner_design_v1`
+- `TerraformGeneratorAgent` -> tarefa `generator_overrides_v1`
+
+### Fluxo completo recomendado
+
+### 1) Gerar dados de treino a partir de jobs reais
+
+Executa o pipeline em cenários reais e exporta dataset:
+
+```bash
+python scripts/export_finetune_dataset.py --jobs-dir jobs --output datasets/finetune_train.jsonl
+```
+
+O export cria exemplos JSONL com:
+- `task`
+- `input` (prompt + contexto útil)
+- `output` (label estruturada)
+
+### 2) Curar dados antes do treino
+
+Antes de treinar, valida manualmente:
+- remover prompts com ambiguidades mal resolvidas
+- remover labels incorretas ou inconsistentes
+- garantir distribuição por `env` (`dev/staging/prod`), `region`, `compute.type`, `data.engine`
+- garantir que não há segredos nem dados sensíveis
+
+Recomendação prática:
+- manter 10%-20% dos exemplos para validação (`finetune_val.jsonl`)
+- não misturar exemplos de baixa qualidade na fase inicial
+
+### 3) Definir objetivo por tarefa (não treinar “tudo junto” sem controlo)
+
+Objetivo por task:
+- `requirements_spec_v1`: melhorar parsing de prompt -> spec
+- `planner_design_v1`: melhorar seleção de módulos/notas mantendo allowlist
+- `generator_overrides_v1`: apenas recomendações de `tfvars_overrides` permitidos
+
+Importante:
+- guardrails de segurança continuam determinísticos
+- fine-tuning não substitui `terraform validate`, `tflint`, `checkov`, `tfsec`
+
+### 4) Medir baseline antes de treinar
+
+Hoje já existe avaliação offline para `requirements_spec_v1`:
+
+```bash
+python scripts/evaluate_requirements_agent.py --dataset datasets/finetune_train.jsonl
+```
+
+Guarda estas métricas como baseline para comparar com modelo fine-tuned.
+
+### 5) Treinar modelo externamente
+
+O treino é feito fora deste repositório (na plataforma/model provider da tua escolha), usando o JSONL exportado.
+
+Quando tiveres um modelo treinado:
+- mantém output estritamente estruturado por tarefa
+- evita permitir texto livre sem schema
+- versiona modelo e dataset (ex: `model_v1`, `dataset_2026-03-01`)
+
+### 6) Integrar sem risco (rollout controlado)
+
+No runtime atual, os agentes usam por defeito `NoopLLM` (modo determinístico).
+
+Para simular modelo fine-tuned localmente, usa replay:
+
+```bash
+export INFRA_AGENTS_LLM_MODE=replay
+export INFRA_AGENTS_LLM_REPLAY_FILE=datasets/finetune_train.jsonl
+python -m infra_agents.cli --prompt-file examples/prompt.txt --engine classic
+```
+
+Depois, substitui `ReplayLLM` por um backend real em `infra_agents/llm/` mantendo a interface:
+- `generate_structured(request: LLMRequest) -> dict | None`
+
+### 7) Validar pós-rollout
+
+Após integrar modelo real:
+- correr testes do repositório
+- executar pipeline em prompts de regressão
+- comparar métricas com baseline
+- inspecionar `summary.json` (`history[].metadata.llm_used`, `rag_sources`, `tfvars_overrides`)
+
+### 8) Estratégia de rollback
+
+Se houver regressão, desativa LLM imediatamente:
+- remover/alterar variáveis de ambiente para modo default (`NoopLLM`)
+- voltar ao fluxo determinístico sem interromper guardrails
+
+Isto permite experimentar fine-tuning com baixo risco operacional.
 
 ## Execução via API
 

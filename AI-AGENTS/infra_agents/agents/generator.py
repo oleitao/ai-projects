@@ -4,6 +4,7 @@ from pathlib import Path
 
 from infra_agents.agents.base import BaseAgent
 from infra_agents.contracts import AgentResult
+from infra_agents.llm import AgentLLM, LLMRequest, NoopLLM
 from infra_agents.rag import LocalKnowledgeBase
 from infra_agents.tools.filesystem import write_text
 
@@ -11,8 +12,13 @@ from infra_agents.tools.filesystem import write_text
 class TerraformGeneratorAgent(BaseAgent):
     name = "Gerador Terraform"
 
-    def __init__(self, knowledge_base: LocalKnowledgeBase | None = None):
+    def __init__(
+        self,
+        knowledge_base: LocalKnowledgeBase | None = None,
+        llm: AgentLLM | None = None,
+    ):
         self.knowledge_base = knowledge_base or LocalKnowledgeBase()
+        self.llm = llm or NoopLLM()
 
     def run(self, state):  # type: ignore[override]
         if state.spec is None:
@@ -29,6 +35,24 @@ class TerraformGeneratorAgent(BaseAgent):
         )
         rag_sources = [hit.source for hit in rag_hits]
         rag_context = self.knowledge_base.render_context(rag_hits)
+        tfvars_overrides: dict[str, str | int | float] = {}
+        llm_used = False
+        llm_payload = self.llm.generate_structured(
+            LLMRequest(
+                task="generator_overrides_v1",
+                prompt=(
+                    f"cloud=aws region={spec['region']} env={spec['env']} "
+                    f"compute={spec['compute']['type']} data_engine={spec['data']['engine']}"
+                ),
+                context=rag_context,
+                schema_name="GeneratorOverrides",
+            )
+        )
+        if isinstance(llm_payload, dict) and llm_payload:
+            maybe_overrides = llm_payload.get("tfvars_overrides", {})
+            if isinstance(maybe_overrides, dict):
+                tfvars_overrides = self._sanitize_tfvars_overrides(maybe_overrides)
+                llm_used = bool(tfvars_overrides)
 
         artifacts = [
             write_text(root / "versions.tf", self._versions_tf(rag_sources)),
@@ -38,7 +62,7 @@ class TerraformGeneratorAgent(BaseAgent):
             write_text(root / "variables.tf", self._variables_tf()),
             write_text(root / "outputs.tf", self._outputs_tf()),
             write_text(root / "main.tf", self._main_tf(spec, rag_sources)),
-            write_text(root / "terraform.tfvars", self._tfvars(spec)),
+            write_text(root / "terraform.tfvars", self._tfvars(spec, tfvars_overrides)),
         ]
         if rag_context:
             artifacts.append(write_text(root / "reports" / "rag_generator.md", rag_context + "\n"))
@@ -48,7 +72,7 @@ class TerraformGeneratorAgent(BaseAgent):
             artifacts=artifacts,
             findings=[],
             next_action="validate",
-            metadata={"rag_sources": rag_sources},
+            metadata={"rag_sources": rag_sources, "llm_used": llm_used, "tfvars_overrides": tfvars_overrides},
         )
 
     def _versions_tf(self, rag_sources: list[str]) -> str:
@@ -511,7 +535,7 @@ output "rds_endpoint" {
 }
 """
 
-    def _tfvars(self, spec: dict) -> str:
+    def _tfvars(self, spec: dict, tfvars_overrides: dict[str, str | int | float]) -> str:
         tags = spec["tags"]
         tags_hcl = "\n".join(f'  {k} = "{v}"' for k, v in tags.items())
 
@@ -519,6 +543,9 @@ output "rds_endpoint" {
         data = spec["data"]
         compute = spec["compute"]
         aws = spec["aws"]
+        db_instance_class = str(tfvars_overrides.get("db_instance_class", "db.t3.micro"))
+        db_allocated_storage = int(tfvars_overrides.get("db_allocated_storage", 20))
+        ec2_instance_type = str(tfvars_overrides.get("ec2_instance_type", "t3.micro"))
 
         return f"""region              = "{spec['region']}"
 aws_profile         = "{aws['profile']}"
@@ -537,11 +564,28 @@ db_enabled        = {str(data['rds']).lower()}
 db_engine         = "{data['engine']}"
 db_multi_az       = {str(data['multi_az']).lower()}
 db_backups        = {str(data['backups']).lower()}
-db_instance_class = "db.t3.micro"
-db_allocated_storage = 20
+db_instance_class = "{db_instance_class}"
+db_allocated_storage = {db_allocated_storage}
 compute_type      = "{compute['type']}"
 autoscaling       = {str(compute['autoscaling']).lower()}
 ec2_ami_id        = "ami-0c02fb55956c7d316"
-ec2_instance_type = "t3.micro"
+ec2_instance_type = "{ec2_instance_type}"
 log_kms_key_id    = ""
 """
+
+    def _sanitize_tfvars_overrides(self, payload: dict) -> dict[str, str | int | float]:
+        allowed_keys = {"db_instance_class", "db_allocated_storage", "ec2_instance_type"}
+        sanitized: dict[str, str | int | float] = {}
+        for key, value in payload.items():
+            if key not in allowed_keys:
+                continue
+            if key == "db_allocated_storage":
+                try:
+                    numeric = int(value)
+                except (ValueError, TypeError):
+                    continue
+                sanitized[key] = max(20, min(numeric, 1024))
+                continue
+            if isinstance(value, str) and value:
+                sanitized[key] = value
+        return sanitized

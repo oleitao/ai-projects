@@ -30,6 +30,7 @@ def create_job_state(
 def write_job_summary(state: JobState) -> None:
     payload = {
         "job_id": state.job_id,
+        "prompt": state.prompt,
         "status": state.status,
         "workspace": str(state.workspace),
         "execution_mode": state.execution_mode,
