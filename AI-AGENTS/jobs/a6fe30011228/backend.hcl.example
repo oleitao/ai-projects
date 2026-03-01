@@ -1,0 +1,5 @@
+bucket         = "tfstate-prod-123456789012"
+key            = "infra-agents/prod/terraform.tfstate"
+region         = "eu-west-1"
+dynamodb_table = "tfstate-locks-prod"
+encrypt        = true
