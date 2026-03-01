@@ -1,0 +1,62 @@
+{
+  "terraform": [
+    {
+      "command": "terraform fmt -recursive",
+      "returncode": 0,
+      "skipped": false,
+      "reason": null,
+      "stdout": "main.tf\nterraform.tfvars\n",
+      "stderr": ""
+    },
+    {
+      "command": "terraform init -backend=false -input=false",
+      "returncode": 1,
+      "skipped": false,
+      "reason": null,
+      "stdout": "\u001b[0m\u001b[1mInitializing modules...\u001b[0m\n",
+      "stderr": "\u001b[31m╷\u001b[0m\u001b[0m\n\u001b[31m│\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1mError accessing remote module registry\u001b[0m\n\u001b[31m│\u001b[0m \u001b[0m\n\u001b[31m│\u001b[0m \u001b[0m\u001b[0m  on main.tf line 24:\n\u001b[31m│\u001b[0m \u001b[0m  24: \u001b[4mmodule \"vpc\"\u001b[0m {\u001b[0m\n\u001b[31m│\u001b[0m \u001b[0m\n\u001b[31m│\u001b[0m \u001b[0mFailed to retrieve available versions for module \"vpc\" (main.tf:24) from\n\u001b[31m│\u001b[0m \u001b[0mregistry.terraform.io: failed to request discovery document: Get\n\u001b[31m│\u001b[0m \u001b[0m\"https://registry.terraform.io/.well-known/terraform.json\": dial tcp:\n\u001b[31m│\u001b[0m \u001b[0mlookup registry.terraform.io: no such host.\n\u001b[31m╵\u001b[0m\u001b[0m\n"
+    },
+    {
+      "command": "terraform validate",
+      "returncode": 1,
+      "skipped": false,
+      "reason": null,
+      "stdout": "",
+      "stderr": "\u001b[31m╷\u001b[0m\u001b[0m\n\u001b[31m│\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1mModule not installed\u001b[0m\n\u001b[31m│\u001b[0m \u001b[0m\n\u001b[31m│\u001b[0m \u001b[0m\u001b[0m  on main.tf line 24:\n\u001b[31m│\u001b[0m \u001b[0m  24: \u001b[4mmodule \"vpc\"\u001b[0m {\u001b[0m\n\u001b[31m│\u001b[0m \u001b[0m\n\u001b[31m│\u001b[0m \u001b[0mThis module is not yet installed. Run \"terraform init\" to install all\n\u001b[31m│\u001b[0m \u001b[0mmodules required by this configuration.\n\u001b[31m╵\u001b[0m\u001b[0m\n"
+    }
+  ],
+  "scanners": [
+    {
+      "command": "tflint --init",
+      "returncode": 127,
+      "skipped": true,
+      "reason": "Command not found: tflint",
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": "tflint",
+      "returncode": 127,
+      "skipped": true,
+      "reason": "Command not found: tflint",
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": "checkov -d .",
+      "returncode": 127,
+      "skipped": true,
+      "reason": "Command not found: checkov",
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": "tfsec .",
+      "returncode": 127,
+      "skipped": true,
+      "reason": "Command not found: tfsec",
+      "stdout": "",
+      "stderr": ""
+    }
+  ]
+}

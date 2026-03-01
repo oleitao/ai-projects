@@ -1,0 +1,205 @@
+{
+  "title": "AI Agents for Terraform Infrastructure Generation",
+  "overview": "Adicionar agentes AI a uma aplicação que gera infraestrutura Terraform via prompt + LLM deve ser feito como uma pipeline multi-agente com papéis definidos, ferramentas e validações automáticas.",
+  "sections": [
+    {
+      "id": 1,
+      "title": "Arquitetura Multi-Agente",
+      "description": "Separar responsabilidades para melhorar decisão, validação, segurança e boas práticas.",
+      "agents": [
+        {
+          "name": "Requisitos",
+          "goal": "Converter prompt do utilizador numa spec estruturada",
+          "outputs": ["spec.json"],
+          "responsibilities": [
+            "Extrair cloud, região, rede, compute, DB, IAM, tags, SLOs, custos, compliance",
+            "Resolver ambiguidades com assumptions explícitas"
+          ]
+        },
+        {
+          "name": "Planeador de Arquitetura",
+          "goal": "Definir padrões e organização da infraestrutura",
+          "outputs": ["design.md", "lista de módulos/recursos"],
+          "responsibilities": [
+            "Escolher módulos",
+            "Definir naming",
+            "Definir ambientes",
+            "Configurar backend remoto",
+            "Fixar versões de providers"
+          ]
+        },
+        {
+          "name": "Gerador Terraform",
+          "goal": "Gerar código Terraform",
+          "outputs": [
+            "main.tf",
+            "variables.tf",
+            "outputs.tf",
+            "providers.tf",
+            "versions.tf",
+            "backend.tf"
+          ],
+          "best_practice": "Preferir templates e módulos aprovados em vez de geração totalmente livre"
+        },
+        {
+          "name": "Validador/QA",
+          "goal": "Validar código com ferramentas reais",
+          "tools": [
+            "terraform fmt",
+            "terraform validate",
+            "terraform plan",
+            "tflint",
+            "checkov",
+            "tfsec"
+          ],
+          "behavior": "Se houver erro, devolver feedback ao gerador (loop controlado)"
+        },
+        {
+          "name": "Segurança/Políticas",
+          "goal": "Aplicar boas práticas e políticas internas",
+          "checks": [
+            "Encryption obrigatória",
+            "Least privilege IAM",
+            "Sem buckets públicos inseguros",
+            "Security Groups restritos",
+            "Logging ativo"
+          ],
+          "can_block_output": true
+        },
+        {
+          "name": "Custos",
+          "goal": "Estimar custo e sugerir otimizações",
+          "tools": ["Infracost"]
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Tool Usage",
+      "description": "Os agentes devem usar ferramentas reais para reduzir alucinação.",
+      "tools": [
+        "Filesystem tools (criar/editar ficheiros)",
+        "Terraform CLI",
+        "Linters e security scanners",
+        "Documentação via RAG",
+        "OPA/Conftest",
+        "Integração com Vault/SSM/KeyVault",
+        "Cloud APIs para validações adicionais"
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Spec Estruturada (Contrato Entre Agentes)",
+      "description": "O gerador não lê o prompt original, apenas a spec estruturada.",
+      "example_schema": {
+        "cloud": "aws",
+        "region": "eu-west-1",
+        "env": "prod",
+        "network": {
+          "vpc_cidr": "string",
+          "public_subnets": ["string"],
+          "private_subnets": ["string"]
+        },
+        "compute": {
+          "type": "ecs | eks | ec2",
+          "sizing": "string",
+          "autoscaling": "boolean"
+        },
+        "data": {
+          "rds": "boolean",
+          "engine": "postgres | mysql",
+          "multi_az": "boolean",
+          "backups": "boolean"
+        },
+        "security": {
+          "encryption": true,
+          "public_access": false
+        },
+        "tags": {
+          "owner": "string",
+          "cost_center": "string"
+        }
+      },
+      "benefits": [
+        "Validações determinísticas",
+        "Geração baseada em módulos",
+        "Diffs simples",
+        "Testes unitários baseados em spec"
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Orquestração",
+      "description": "Supervisor controla execução e loops.",
+      "responsibilities": [
+        "Chamar agentes por ordem",
+        "Manter estado do job",
+        "Limitar número de iterações",
+        "Definir critérios de conclusão"
+      ],
+      "agent_response_contract": {
+        "artifacts": "ficheiros gerados/alterados",
+        "findings": "erros ou riscos identificados",
+        "next_action": "ação sugerida"
+      }
+    },
+    {
+      "id": 5,
+      "title": "Guardrails",
+      "controls": [
+        "Allowlist de providers",
+        "Policy-as-code",
+        "Remoção automática de credenciais",
+        "Modo plan-only por defeito",
+        "Aprovação humana antes de apply",
+        "Logging e auditoria"
+      ]
+    },
+    {
+      "id": 6,
+      "title": "RAG para Conhecimento Técnico",
+      "knowledge_sources": [
+        "Documentação oficial dos providers",
+        "Catálogo interno de módulos",
+        "Padrões de naming/tagging",
+        "Exemplos aprovados"
+      ],
+      "benefit": "Reduz alucinação e aumenta consistência"
+    },
+    {
+      "id": 7,
+      "title": "Fluxo Backend",
+      "steps": [
+        "Receber prompt via API",
+        "Criar job",
+        "Gerar spec.json",
+        "Gerar design.md",
+        "Gerar Terraform",
+        "Executar validações",
+        "Iterar se necessário",
+        "Retornar PR/diff + plan.out + relatórios"
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Prompts de Sistema (Exemplo)",
+      "roles": {
+        "Requisitos": "Converte texto livre numa spec JSON. Não inventes detalhes; usa assumptions.",
+        "Gerador": "Gera apenas Terraform compatível com spec. Usa módulos aprovados. Não escrevas credenciais.",
+        "Validador": "Executa ferramentas, devolve erros com ficheiro/linha e proposta de correção.",
+        "Segurança": "Bloqueia padrões inseguros. Sugere remediações."
+      }
+    },
+    {
+      "id": 9,
+      "title": "MVP Recomendado",
+      "initial_agents": [
+        "Spec Agent",
+        "Generator Agent",
+        "Validator Agent"
+      ],
+      "execution_mode": "plan-only",
+      "next_step": "Adicionar Segurança, Custos e Policies após validação do fluxo base"
+    }
+  ]
+}

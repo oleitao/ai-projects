@@ -1,0 +1,46 @@
+{
+  "cloud": "aws",
+  "region": "eu-west-1",
+  "env": "prod",
+  "aws": {
+    "account_id": "123456789012",
+    "profile": "devops",
+    "backend_bucket": "tfstate-prod-123456789012",
+    "backend_dynamodb_table": "tfstate-locks-prod",
+    "backend_key_prefix": "infra-agents"
+  },
+  "network": {
+    "vpc_cidr": "10.0.0.0/16",
+    "public_subnets": [
+      "10.0.1.0/24",
+      "10.0.2.0/24"
+    ],
+    "private_subnets": [
+      "10.0.11.0/24",
+      "10.0.12.0/24"
+    ]
+  },
+  "compute": {
+    "type": "ecs",
+    "sizing": "small",
+    "autoscaling": true
+  },
+  "data": {
+    "rds": true,
+    "engine": "postgres",
+    "multi_az": true,
+    "backups": true
+  },
+  "security": {
+    "encryption": true,
+    "public_access": false
+  },
+  "tags": {
+    "owner": "platform-team",
+    "cost_center": "shared"
+  },
+  "assumptions": [
+    "Spec inferida por heurísticas por não existir JSON explícito no prompt.",
+    "Contexto RAG consultado: modules.md, providers.md."
+  ]
+}
