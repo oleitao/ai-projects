@@ -136,6 +136,7 @@ class JobState:
     prompt: str
     workspace: Path
     execution_mode: str = "plan-only"
+    validation_mode: str = "auto"
     max_iterations: int = 3
     spec: InfrastructureSpec | None = None
     artifacts: list[str] = field(default_factory=list)

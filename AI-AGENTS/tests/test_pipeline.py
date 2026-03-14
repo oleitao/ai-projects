@@ -47,6 +47,26 @@ class PipelineTests(unittest.TestCase):
 
             self.assertIn(state.status, {"validated", "done", "failed", "blocked"})
 
+    def test_pipeline_supports_credentialless_validation_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt = "AWS prod eu-west-1 com ECS autoscaling e RDS postgres multi-az"
+            supervisor = WorkflowSupervisor(max_iterations=1, engine="classic")
+            state = supervisor.run(
+                prompt=prompt,
+                output_root=Path(tmp),
+                execution_mode="plan-only",
+                validation_mode="credentialless",
+            )
+
+            self.assertEqual(state.validation_mode, "credentialless")
+            summary = json.loads((state.workspace / "summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["validation_mode"], "credentialless")
+            validation = json.loads((state.workspace / "reports" / "validation.json").read_text(encoding="utf-8"))
+            plan_entries = [item for item in validation["terraform"] if item["command"].startswith("terraform plan ")]
+            self.assertEqual(len(plan_entries), 1)
+            self.assertTrue(plan_entries[0]["skipped"])
+            self.assertEqual(plan_entries[0]["reason"], "Skipped in credentialless validation mode")
+
 
 if __name__ == "__main__":
     unittest.main()

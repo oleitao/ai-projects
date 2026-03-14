@@ -28,6 +28,13 @@ def parse_args() -> argparse.Namespace:
         choices=["auto", "classic", "langgraph"],
         help="Motor de orquestração (auto seleciona langgraph quando disponível)",
     )
+    parser.add_argument(
+        "--validation-mode",
+        type=str,
+        default="auto",
+        choices=["auto", "credentialless"],
+        help="Modo de validação Terraform",
+    )
     return parser.parse_args()
 
 
@@ -48,7 +55,12 @@ def main() -> None:
     except LangGraphUnavailableError as exc:
         raise SystemExit(str(exc)) from exc
 
-    state = supervisor.run(prompt=prompt, output_root=args.output_dir, execution_mode=args.execution_mode)
+    state = supervisor.run(
+        prompt=prompt,
+        output_root=args.output_dir,
+        execution_mode=args.execution_mode,
+        validation_mode=args.validation_mode,
+    )
 
     summary = {
         "job_id": state.job_id,
@@ -56,6 +68,7 @@ def main() -> None:
         "workspace": str(state.workspace),
         "findings_count": len(state.findings),
         "engine": supervisor.engine,
+        "validation_mode": state.validation_mode,
     }
     print(json.dumps(summary, indent=2, ensure_ascii=False))
 

@@ -44,13 +44,7 @@ class ArchitecturePlannerAgent(BaseAgent):
         if spec.data.rds:
             modules.append("terraform-aws-modules/rds/aws")
         base_modules = set(modules)
-        approved_modules = {
-            "terraform-aws-modules/vpc/aws",
-            "terraform-aws-modules/ecs/aws",
-            "terraform-aws-modules/eks/aws",
-            "terraform-aws-modules/autoscaling/aws",
-            "terraform-aws-modules/rds/aws",
-        }
+        approved_modules = set(base_modules)
 
         llm_notes: list[str] = []
         llm_used = False

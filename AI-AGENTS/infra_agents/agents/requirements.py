@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 from infra_agents.agents.base import BaseAgent
-from infra_agents.contracts import AgentResult, InfrastructureSpec
+from infra_agents.contracts import AgentResult, InfrastructureSpec, SpecValidationError
 from infra_agents.llm import AgentLLM, LLMRequest, NoopLLM
 from infra_agents.rag import LocalKnowledgeBase
 from infra_agents.tools.filesystem import write_json, write_text
@@ -25,6 +25,7 @@ class RequirementsAgent(BaseAgent):
     def run(self, state):  # type: ignore[override]
         assumptions: list[str] = []
         prompt = state.prompt.strip()
+        heuristic_payload = self._heuristic_spec(prompt)
         rag_hits = self.knowledge_base.retrieve(
             query=f"requirements agent aws spec backend tags security {prompt}",
             top_k=2,
@@ -44,11 +45,24 @@ class RequirementsAgent(BaseAgent):
                 )
             )
             if isinstance(llm_payload, dict) and llm_payload:
-                payload = llm_payload
-                llm_used = True
-                assumptions.append("Spec inferida via LLM estruturado com contexto RAG.")
+                try:
+                    llm_spec = InfrastructureSpec.from_dict(llm_payload)
+                    heuristic_spec = InfrastructureSpec.from_dict(heuristic_payload)
+                except (SpecValidationError, TypeError, ValueError):
+                    payload = heuristic_payload
+                    assumptions.append("LLM devolveu spec inválida; fallback para heurísticas determinísticas.")
+                else:
+                    if self._critical_fields_match(llm_spec, heuristic_spec):
+                        payload = llm_payload
+                        llm_used = True
+                        assumptions.append("Spec inferida via LLM estruturado com contexto RAG.")
+                    else:
+                        payload = heuristic_payload
+                        assumptions.append(
+                            "LLM devolveu spec inconsistente com o prompt; fallback para heurísticas determinísticas."
+                        )
             else:
-                payload = self._heuristic_spec(prompt)
+                payload = heuristic_payload
                 assumptions.append("Spec inferida por heurísticas por não existir JSON explícito no prompt.")
         if rag_sources:
             assumptions.append(f"Contexto RAG consultado: {', '.join(rag_sources)}.")
@@ -142,3 +156,14 @@ class RequirementsAgent(BaseAgent):
                 "cost_center": "shared",
             },
         }
+
+    def _critical_fields_match(self, llm_spec: InfrastructureSpec, heuristic_spec: InfrastructureSpec) -> bool:
+        return (
+            llm_spec.region == heuristic_spec.region
+            and llm_spec.env == heuristic_spec.env
+            and llm_spec.compute.type == heuristic_spec.compute.type
+            and llm_spec.data.engine == heuristic_spec.data.engine
+            and llm_spec.data.rds == heuristic_spec.data.rds
+            and llm_spec.security.encryption == heuristic_spec.security.encryption
+            and llm_spec.security.public_access == heuristic_spec.security.public_access
+        )

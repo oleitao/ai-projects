@@ -28,11 +28,18 @@ class ClassicWorkflowSupervisor:
         self.security = SecurityPolicyAgent()
         self.cost = CostAgent()
 
-    def run(self, prompt: str, output_root: Path, execution_mode: str = "plan-only") -> JobState:
+    def run(
+        self,
+        prompt: str,
+        output_root: Path,
+        execution_mode: str = "plan-only",
+        validation_mode: str = "auto",
+    ) -> JobState:
         state = create_job_state(
             prompt=prompt,
             output_root=output_root,
             execution_mode=execution_mode,
+            validation_mode=validation_mode,
             max_iterations=self.max_iterations,
         )
 

@@ -49,3 +49,16 @@ export INFRA_AGENTS_LLM_MODE=replay
 export INFRA_AGENTS_LLM_REPLAY_FILE=datasets/finetune_train.jsonl
 python -m infra_agents.cli --prompt-file examples/prompt.txt --engine classic
 ```
+
+## Live mode (modelo local no Ollama)
+
+Também podes usar o Ollama local para correr o modelo no pipeline:
+
+```bash
+export INFRA_AGENTS_LLM_MODE=ollama
+export INFRA_AGENTS_LLM_BASE_URL=http://localhost:11434
+export INFRA_AGENTS_LLM_MODEL=llama3.2:latest
+python -m infra_agents.cli --prompt-file examples/prompt.txt --engine classic
+```
+
+O runtime continua a usar fallback determinístico sempre que o modelo não devolve JSON válido.

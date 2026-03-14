@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from infra_agents.agents.base import BaseAgent
@@ -40,18 +41,15 @@ class TerraformGeneratorAgent(BaseAgent):
         llm_payload = self.llm.generate_structured(
             LLMRequest(
                 task="generator_overrides_v1",
-                prompt=(
-                    f"cloud=aws region={spec['region']} env={spec['env']} "
-                    f"compute={spec['compute']['type']} data_engine={spec['data']['engine']}"
-                ),
-                context=rag_context,
+                prompt=self._build_generator_llm_prompt(spec),
+                context=self._build_generator_llm_context(spec, rag_context),
                 schema_name="GeneratorOverrides",
             )
         )
         if isinstance(llm_payload, dict) and llm_payload:
             maybe_overrides = llm_payload.get("tfvars_overrides", {})
             if isinstance(maybe_overrides, dict):
-                tfvars_overrides = self._sanitize_tfvars_overrides(maybe_overrides)
+                tfvars_overrides = self._sanitize_tfvars_overrides(maybe_overrides, spec)
                 llm_used = bool(tfvars_overrides)
 
         artifacts = [
@@ -573,19 +571,93 @@ ec2_instance_type = "{ec2_instance_type}"
 log_kms_key_id    = ""
 """
 
-    def _sanitize_tfvars_overrides(self, payload: dict) -> dict[str, str | int | float]:
+    def _sanitize_tfvars_overrides(self, payload: dict, spec: dict) -> dict[str, str | int | float]:
         allowed_keys = {"db_instance_class", "db_allocated_storage", "ec2_instance_type"}
         sanitized: dict[str, str | int | float] = {}
         for key, value in payload.items():
             if key not in allowed_keys:
+                continue
+            if key == "ec2_instance_type" and spec["compute"]["type"] != "ec2":
+                continue
+            if key in {"db_instance_class", "db_allocated_storage"} and not spec["data"]["rds"]:
                 continue
             if key == "db_allocated_storage":
                 try:
                     numeric = int(value)
                 except (ValueError, TypeError):
                     continue
-                sanitized[key] = max(20, min(numeric, 1024))
+                sanitized[key] = max(20, min(numeric, self._max_db_allocated_storage(spec)))
                 continue
             if isinstance(value, str) and value:
                 sanitized[key] = value
         return sanitized
+
+    def _build_generator_llm_prompt(self, spec: dict) -> str:
+        defaults = self._default_tfvars_inputs()
+        prompt_payload = {
+            "goal": "Recommend only safe tfvars overrides that improve sizing for this workload.",
+            "spec": {
+                "region": spec["region"],
+                "env": spec["env"],
+                "compute": spec["compute"],
+                "data": spec["data"],
+                "security": spec["security"],
+            },
+            "current_defaults": defaults,
+            "allowed_override_keys": list(defaults.keys()),
+            "rules": [
+                "Return only tfvars_overrides.",
+                "If no clear improvement exists, return an empty object for tfvars_overrides.",
+                "Do not change compute_type, env, region, network, backend, tags, engine, or security.",
+                "Only use ec2_instance_type when compute.type is ec2.",
+                "Only use db_instance_class and db_allocated_storage when data.rds is true.",
+                "Prefer conservative production-ready sizing changes over aggressive cost increases.",
+            ],
+        }
+        return json.dumps(prompt_payload, ensure_ascii=False, indent=2)
+
+    def _build_generator_llm_context(self, spec: dict, rag_context: str) -> str:
+        allowed_values = {
+            "db_instance_class": ["db.t3.micro", "db.t3.small", "db.t3.medium"],
+            "db_allocated_storage": {"min": 20, "max": self._max_db_allocated_storage(spec)},
+            "ec2_instance_type": ["t3.micro", "t3.small", "t3.medium", "t3.large"],
+        }
+        guidance = {
+            "workload_hints": [
+                f"env={spec['env']}",
+                f"compute_type={spec['compute']['type']}",
+                f"autoscaling={spec['compute']['autoscaling']}",
+                f"db_enabled={spec['data']['rds']}",
+                f"db_engine={spec['data']['engine']}",
+                f"db_multi_az={spec['data']['multi_az']}",
+                f"db_backups={spec['data']['backups']}",
+            ],
+            "allowed_values": allowed_values,
+            "decision_policy": [
+                "For ECS or EKS workloads, usually leave ec2_instance_type unchanged.",
+                "For small production PostgreSQL with Multi-AZ, db.t3.small may be acceptable if a change is needed.",
+                f"For this workload, do not exceed {self._max_db_allocated_storage(spec)} GiB for db_allocated_storage.",
+                "Avoid overrides that are unrelated to the selected runtime.",
+            ],
+        }
+        parts = [
+            json.dumps(guidance, ensure_ascii=False, indent=2),
+        ]
+        if rag_context:
+            parts.extend(["", "RAG context:", rag_context])
+        return "\n".join(parts)
+
+    def _default_tfvars_inputs(self) -> dict[str, str | int]:
+        return {
+            "db_instance_class": "db.t3.micro",
+            "db_allocated_storage": 20,
+            "ec2_instance_type": "t3.micro",
+        }
+
+    def _max_db_allocated_storage(self, spec: dict) -> int:
+        sizing = str(spec["compute"].get("sizing", "small")).lower()
+        if sizing == "small":
+            return 100 if spec["env"] == "prod" else 50
+        if sizing == "medium":
+            return 250
+        return 500

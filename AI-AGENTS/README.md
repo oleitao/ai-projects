@@ -22,6 +22,59 @@ Este projeto implementa um MVP de orquestração por agentes para:
 - aplicar políticas de segurança
 - produzir resumo final do job e relatórios
 
+## Diagrama da infraestrutura
+
+```mermaid
+flowchart TB
+    User[Prompt em linguagem natural] --> Pipeline[Pipeline multi-agente]
+    Pipeline --> TF[Terraform gerado]
+
+    subgraph AWS[AWS Account / Região]
+        Backend[S3 backend remoto]
+        Lock[DynamoDB lock table]
+
+        subgraph Network[VPC]
+            PubA[Public subnet A]
+            PubB[Public subnet B]
+            PrivA[Private subnet A]
+            PrivB[Private subnet B]
+            NAT[NAT Gateway]
+        end
+
+        subgraph Compute[Compute]
+            ECS[ECS Cluster]
+            EC2[EC2 / ASG]
+            EKS[EKS placeholder]
+        end
+
+        subgraph Data[Data]
+            RDS[RDS Postgres/MySQL\nMulti-AZ opcional]
+        end
+
+        IAM[IAM role mínima]
+        CW[CloudWatch / logs]
+    end
+
+    TF --> Backend
+    TF --> Lock
+    TF --> Network
+    TF --> Compute
+    TF --> Data
+    TF --> IAM
+    TF --> CW
+
+    PrivA --> ECS
+    PrivB --> ECS
+    PrivA --> EC2
+    PrivB --> EC2
+    PrivA --> EKS
+    PrivB --> EKS
+    PrivA --> RDS
+    PrivB --> RDS
+    PubA --> NAT
+    PubB --> NAT
+```
+
 ## Arquitetura dos agentes
 
 Ordem de execução no supervisor:
@@ -33,6 +86,34 @@ Ordem de execução no supervisor:
 6. `Custos`
 
 O supervisor faz loop controlado de correção (`max_iterations`) entre geração e validação.
+
+## Diagrama do workflow
+
+```mermaid
+flowchart LR
+    A[Prompt] --> B[Requisitos]
+    B --> C[spec.json]
+    C --> D[Planeador de Arquitetura]
+    D --> E[design.md]
+    E --> F[Gerador Terraform]
+    F --> G[Artefactos .tf]
+    G --> H[Validador / QA]
+    H --> I{Existem erros?}
+    I -- Sim --> J[Regenerar]
+    J --> F
+    I -- Não --> K[Segurança / Políticas]
+    K --> L{Blocking issue?}
+    L -- Sim --> M[Job blocked]
+    L -- Não --> N[Custos]
+    N --> O[summary.json + reports]
+
+    P[RAG local\nknowledge/*.md] --> B
+    P --> D
+    P --> F
+    Q[LLM opcional\nNoop / Replay / Ollama] --> B
+    Q --> D
+    Q --> F
+```
 
 ## AWS Scope do scaffold
 
@@ -129,6 +210,18 @@ Parâmetros úteis:
 - `--max-iterations` (default: `3`)
 - `--execution-mode` (atual: apenas `plan-only`)
 - `--engine` (`auto`, `classic`, `langgraph`)
+- `--validation-mode` (`auto`, `credentialless`)
+
+Modo `auto`:
+- executa `terraform fmt`, `terraform init -backend=false`, `terraform validate`
+- tenta ainda `terraform plan` num workspace temporário local, sem `backend.tf`
+- reutiliza `.terraform` e `.terraform.lock.hcl` quando disponíveis para acelerar a validação
+- erros de ambiente como falta de profile AWS/credenciais são tratados como `warning`
+
+Modo `credentialless`:
+- executa `terraform fmt`, `terraform init -backend=false` e `terraform validate`
+- regista `terraform plan` como `skipped` no relatório de validação
+- serve para validar coerência estrutural do Terraform sem depender de credenciais AWS locais
 
 ## Fine-Tuning Readiness
 
@@ -210,8 +303,42 @@ export INFRA_AGENTS_LLM_REPLAY_FILE=datasets/finetune_train.jsonl
 python -m infra_agents.cli --prompt-file examples/prompt.txt --engine classic
 ```
 
-Depois, substitui `ReplayLLM` por um backend real em `infra_agents/llm/` mantendo a interface:
+Para activar o modelo local no Ollama:
+
+```bash
+export INFRA_AGENTS_LLM_MODE=ollama
+export INFRA_AGENTS_LLM_BASE_URL=http://localhost:11434
+export INFRA_AGENTS_LLM_MODEL=llama3.2:latest
+export INFRA_AGENTS_LLM_TEMPERATURE=0
+python -m infra_agents.cli --prompt-file examples/prompt.txt --engine classic
+```
+
+Variáveis suportadas no modo `ollama`:
+- `INFRA_AGENTS_LLM_BASE_URL`
+- `INFRA_AGENTS_LLM_MODEL`
+- `INFRA_AGENTS_LLM_TIMEOUT` (default `60`)
+- `INFRA_AGENTS_LLM_TEMPERATURE` (default `0`)
+
+O provider envia o schema JSON de cada tarefa ao Ollama e exige resposta em JSON puro, mantendo a mesma interface:
 - `generate_structured(request: LLMRequest) -> dict | None`
+
+Agentes que usam LLM/Ollama no runtime atual:
+- `RequirementsAgent`
+- `ArchitecturePlannerAgent`
+- `TerraformGeneratorAgent`
+
+Agentes que continuam determinísticos e não usam LLM/Ollama:
+- `ValidatorAgent`
+- `SecurityPolicyAgent`
+- `CostAgent`
+
+Nota operacional:
+- mesmo nos agentes acima, o Ollama só é usado quando `INFRA_AGENTS_LLM_MODE=ollama`
+- se o modelo falhar ou devolver JSON inválido, o pipeline faz fallback para a lógica determinística
+- `RequirementsAgent` rejeita specs do LLM inválidas ou inconsistentes com os campos críticos do prompt
+- `ArchitecturePlannerAgent` só aceita módulos LLM compatíveis com o runtime pedido
+- `TerraformGeneratorAgent` só aplica overrides permitidos e contextualizados ao workload
+- o estado por execução fica visível em `summary.json` através de `history[].metadata.llm_used`
 
 ### 7) Validar pós-rollout
 
@@ -265,6 +392,8 @@ Cada execução cria `jobs/<job_id>/` com artefactos como:
 - backend remoto obrigatório com `s3`
 - verificação de configuração de lock DynamoDB no backend example
 - execução em `plan-only`
+- validação `auto` com `terraform plan` local sem backend remoto
+- validação `credentialless` para coerência estrutural sem credenciais AWS
 - deteção de padrões inseguros:
   - acesso público explícito
   - credenciais hardcoded
@@ -287,6 +416,7 @@ python -m unittest discover -s tests -p 'test_*.py' -v
 ## Limitações atuais (MVP)
 
 - EKS ainda está como placeholder de integração
-- `terraform plan` depende de ambiente com rede/credenciais/plugins
+- em modo `auto`, `terraform plan` continua a depender de provider/plugins e de credenciais/profile AWS válidos
+- em modo `credentialless`, não há `terraform plan`; valida apenas coerência estrutural local
 - não executa `terraform apply`
 - não integra OPA/Conftest nem catálogo interno de módulos ainda

@@ -12,6 +12,7 @@ def create_job_state(
     prompt: str,
     output_root: Path,
     execution_mode: str,
+    validation_mode: str,
     max_iterations: int,
 ) -> JobState:
     job_id = uuid.uuid4().hex[:12]
@@ -22,6 +23,7 @@ def create_job_state(
         prompt=prompt,
         workspace=workspace,
         execution_mode=execution_mode,
+        validation_mode=validation_mode,
         max_iterations=max_iterations,
         status="running",
     )
@@ -34,6 +36,7 @@ def write_job_summary(state: JobState) -> None:
         "status": state.status,
         "workspace": str(state.workspace),
         "execution_mode": state.execution_mode,
+        "validation_mode": state.validation_mode,
         "iterations": state.iteration,
         "blocked": state.blocked,
         "artifacts": state.artifacts,

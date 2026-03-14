@@ -59,11 +59,18 @@ class LangGraphWorkflowSupervisor:
         self.cost = CostAgent()
         self.graph = self._build_graph()
 
-    def run(self, prompt: str, output_root: Path, execution_mode: str = "plan-only") -> JobState:
+    def run(
+        self,
+        prompt: str,
+        output_root: Path,
+        execution_mode: str = "plan-only",
+        validation_mode: str = "auto",
+    ) -> JobState:
         job = create_job_state(
             prompt=prompt,
             output_root=output_root,
             execution_mode=execution_mode,
+            validation_mode=validation_mode,
             max_iterations=self.max_iterations,
         )
 
