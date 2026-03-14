@@ -4,6 +4,7 @@ from pathlib import Path
 
 from infra_agents.agents.base import BaseAgent
 from infra_agents.contracts import AgentResult
+from infra_agents.llm import AgentLLM, LLMRequest
 from infra_agents.rag import LocalKnowledgeBase
 from infra_agents.tools.filesystem import write_text
 
@@ -11,8 +12,13 @@ from infra_agents.tools.filesystem import write_text
 class ArchitecturePlannerAgent(BaseAgent):
     name = "Planeador de Arquitetura"
 
-    def __init__(self, knowledge_base: LocalKnowledgeBase | None = None):
+    def __init__(
+        self,
+        llm: AgentLLM,
+        knowledge_base: LocalKnowledgeBase | None = None,
+    ):
         self.knowledge_base = knowledge_base or LocalKnowledgeBase()
+        self.llm = llm
 
     def run(self, state):  # type: ignore[override]
         if state.spec is None:
@@ -37,8 +43,30 @@ class ArchitecturePlannerAgent(BaseAgent):
             modules.append("terraform-aws-modules/autoscaling/aws")
         if spec.data.rds:
             modules.append("terraform-aws-modules/rds/aws")
+        base_modules = set(modules)
+        approved_modules = set(base_modules)
 
-        design = self._render_design(spec.to_dict(), modules, rag_sources)
+        llm_notes: list[str] = []
+        llm_payload = self.llm.generate_structured(
+            LLMRequest(
+                task="planner_design_v1",
+                prompt=(
+                    f"cloud=aws region={spec.region} env={spec.env} "
+                    f"compute={spec.compute.type} data_engine={spec.data.engine}"
+                ),
+                context=rag_context,
+                schema_name="PlannerDecision",
+            )
+        )
+        candidate_modules = llm_payload.get("modules", [])
+        if isinstance(candidate_modules, list):
+            llm_modules = {m for m in candidate_modules if isinstance(m, str) and m in approved_modules}
+            modules = sorted(base_modules | llm_modules)
+        notes = llm_payload.get("notes", [])
+        if isinstance(notes, list):
+            llm_notes = [n for n in notes if isinstance(n, str)][:5]
+
+        design = self._render_design(spec.to_dict(), modules, rag_sources, llm_notes)
         path = Path(state.workspace, "design.md")
         artifact = write_text(path, design)
         artifacts = [artifact]
@@ -51,13 +79,14 @@ class ArchitecturePlannerAgent(BaseAgent):
             artifacts=artifacts,
             findings=[],
             next_action="generate_terraform",
-            metadata={"modules": modules, "rag_sources": rag_sources},
+            metadata={"modules": modules, "rag_sources": rag_sources, "llm_used": True, "llm_notes": llm_notes},
         )
 
-    def _render_design(self, spec: dict, modules: list[str], rag_sources: list[str]) -> str:
+    def _render_design(self, spec: dict, modules: list[str], rag_sources: list[str], llm_notes: list[str]) -> str:
         module_lines = "\n".join(f"- {module}" for module in modules)
         compute_type = spec["compute"]["type"]
         rag_lines = "\n".join(f"- {source}" for source in rag_sources) if rag_sources else "- Nenhuma fonte relevante"
+        llm_lines = "\n".join(f"- {note}" for note in llm_notes) if llm_notes else "- Sem notas adicionais"
         return f"""# Design de Infraestrutura
 
 ## Contexto
@@ -93,4 +122,7 @@ class ArchitecturePlannerAgent(BaseAgent):
 
 ## Referências RAG
 {rag_lines}
+
+## Notas LLM
+{llm_lines}
 """

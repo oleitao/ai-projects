@@ -5,8 +5,9 @@ from pathlib import Path
 
 from infra_agents.agents.base import BaseAgent
 from infra_agents.contracts import AgentFinding, AgentResult
+from infra_agents.tools.command_runner import CommandResult
 from infra_agents.tools.filesystem import write_json
-from infra_agents.tools.terraform_cli import run_security_scanners, run_terraform_validation
+from infra_agents.tools.terraform_cli import local_validation_workspace, run_security_scanners, run_terraform_validation
 
 
 class ValidatorAgent(BaseAgent):
@@ -14,6 +15,7 @@ class ValidatorAgent(BaseAgent):
 
     def run(self, state):  # type: ignore[override]
         findings: list[AgentFinding] = []
+        validation_mode = getattr(state, "validation_mode", "auto")
         commands = run_terraform_validation(state.workspace)
         scanners = run_security_scanners(state.workspace)
 
@@ -26,8 +28,8 @@ class ValidatorAgent(BaseAgent):
             report_payload["terraform"].append(self._serialize(result))
             findings.extend(self._to_findings(result, source="terraform"))
 
-        plan_result = self._run_plan_if_possible(commands, state.workspace)
-        if plan_result is not None:
+        plan_results = self._run_plan_if_possible(commands, state.workspace, validation_mode)
+        for plan_result in plan_results:
             report_payload["terraform"].append(self._serialize(plan_result))
             findings.extend(self._to_findings(plan_result, source="terraform"))
 
@@ -45,26 +47,48 @@ class ValidatorAgent(BaseAgent):
             artifacts=[artifact],
             findings=findings,
             next_action="regenerate" if has_errors else "continue",
+            metadata={"validation_mode": validation_mode},
         )
 
-    def _run_plan_if_possible(self, terraform_results: list, workspace: Path):
+    def _run_plan_if_possible(self, terraform_results: list, workspace: Path, validation_mode: str = "auto"):
+        if validation_mode == "credentialless":
+            return [
+                CommandResult(
+                    command=["terraform", "plan", "-lock=false", "-input=false", "-refresh=false", "-out=plan.out"],
+                    returncode=0,
+                    stdout="",
+                    stderr="",
+                    skipped=True,
+                    reason="Skipped in credentialless validation mode",
+                )
+            ]
+
         if not terraform_results:
-            return None
+            return []
 
         init_result = terraform_results[1] if len(terraform_results) > 1 else None
         validate_result = terraform_results[2] if len(terraform_results) > 2 else None
 
         if init_result is None or validate_result is None:
-            return None
+            return []
         if init_result.returncode != 0 or validate_result.returncode != 0:
-            return None
+            return []
 
         from infra_agents.tools.command_runner import run_command
 
-        return run_command(
-            ["terraform", "plan", "-lock=false", "-input=false", "-refresh=false", "-out=plan.out"],
-            workspace,
-        )
+        with local_validation_workspace(workspace) as plan_workspace:
+            init_command = ["terraform", "init", "-backend=false", "-input=false"]
+            if (plan_workspace / ".terraform").exists():
+                init_command.append("-get=false")
+            plan_init = run_command(init_command, plan_workspace)
+            if plan_init.returncode != 0:
+                return [plan_init]
+
+            plan = run_command(
+                ["terraform", "plan", "-lock=false", "-input=false", "-refresh=false", "-out=plan.out"],
+                plan_workspace,
+            )
+            return [plan_init, plan]
 
     def _serialize(self, result) -> dict:
         return {
@@ -79,6 +103,8 @@ class ValidatorAgent(BaseAgent):
     def _to_findings(self, result, source: str) -> list[AgentFinding]:
         label = " ".join(result.command)
         if result.skipped:
+            if result.reason == "Skipped in credentialless validation mode":
+                return []
             return [
                 AgentFinding(
                     severity="warning",
@@ -108,6 +134,7 @@ class ValidatorAgent(BaseAgent):
             "no such host",
             "failed to request discovery document",
             "backend initialization required",
+            "failed to get shared config profile",
             "module not installed",
             "no valid credential sources",
             "failed to load plugin schemas",

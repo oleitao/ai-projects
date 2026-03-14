@@ -10,7 +10,9 @@ from infra_agents.agents.requirements import RequirementsAgent
 from infra_agents.agents.security import SecurityPolicyAgent
 from infra_agents.agents.validator import ValidatorAgent
 from infra_agents.contracts import JobState
+from infra_agents.llm import build_llm_from_env
 from infra_agents.orchestration.common import create_job_state, info_finding, write_job_summary
+from infra_agents.rag import LocalKnowledgeBase
 
 try:
     from langgraph.graph import END, START, StateGraph
@@ -47,19 +49,28 @@ class LangGraphWorkflowSupervisor:
             )
 
         self.max_iterations = max_iterations
-        self.requirements = RequirementsAgent()
-        self.planner = ArchitecturePlannerAgent()
-        self.generator = TerraformGeneratorAgent()
+        self.knowledge_base = LocalKnowledgeBase()
+        self.llm = build_llm_from_env()
+        self.requirements = RequirementsAgent(knowledge_base=self.knowledge_base, llm=self.llm)
+        self.planner = ArchitecturePlannerAgent(knowledge_base=self.knowledge_base, llm=self.llm)
+        self.generator = TerraformGeneratorAgent(knowledge_base=self.knowledge_base, llm=self.llm)
         self.validator = ValidatorAgent()
         self.security = SecurityPolicyAgent()
         self.cost = CostAgent()
         self.graph = self._build_graph()
 
-    def run(self, prompt: str, output_root: Path, execution_mode: str = "plan-only") -> JobState:
+    def run(
+        self,
+        prompt: str,
+        output_root: Path,
+        execution_mode: str = "plan-only",
+        validation_mode: str = "auto",
+    ) -> JobState:
         job = create_job_state(
             prompt=prompt,
             output_root=output_root,
             execution_mode=execution_mode,
+            validation_mode=validation_mode,
             max_iterations=self.max_iterations,
         )
 

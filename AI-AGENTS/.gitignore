@@ -14,3 +14,4 @@ jobs/
 *.tfstate.backup
 .terraform/
 reports/
+jobs

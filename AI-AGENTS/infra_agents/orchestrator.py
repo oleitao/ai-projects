@@ -23,8 +23,19 @@ class WorkflowSupervisor:
         else:
             self._impl = ClassicWorkflowSupervisor(max_iterations=max_iterations)
 
-    def run(self, prompt: str, output_root: Path, execution_mode: str = "plan-only") -> JobState:
-        return self._impl.run(prompt=prompt, output_root=output_root, execution_mode=execution_mode)
+    def run(
+        self,
+        prompt: str,
+        output_root: Path,
+        execution_mode: str = "plan-only",
+        validation_mode: str = "auto",
+    ) -> JobState:
+        return self._impl.run(
+            prompt=prompt,
+            output_root=output_root,
+            execution_mode=execution_mode,
+            validation_mode=validation_mode,
+        )
 
     def _resolve_engine(self, engine: str) -> str:
         allowed = {"auto", "classic", "langgraph"}
