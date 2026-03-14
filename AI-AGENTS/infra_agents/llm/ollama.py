@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib import error, request
 
-from infra_agents.llm.base import LLMRequest
+from infra_agents.llm.base import LLMRequest, LLMResponseError
 from infra_agents.llm.schemas import schema_by_name
 
 
@@ -23,7 +23,7 @@ class OllamaLLM:
     def __init__(self, config: OllamaConfig):
         self.config = config
 
-    def generate_structured(self, request_payload: LLMRequest) -> dict[str, Any] | None:
+    def generate_structured(self, request_payload: LLMRequest) -> dict[str, Any]:
         body = self._build_request_body(request_payload)
         req = request.Request(
             url=f"{self.config.base_url.rstrip('/')}/api/generate",
@@ -35,12 +35,12 @@ class OllamaLLM:
         try:
             with request.urlopen(req, timeout=self.config.timeout_seconds) as response:
                 payload = json.loads(response.read().decode("utf-8"))
-        except (error.HTTPError, error.URLError, TimeoutError, json.JSONDecodeError, OSError):
-            return None
+        except (error.HTTPError, error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+            raise LLMResponseError("Falha ao comunicar com o Ollama.") from exc
 
         content = payload.get("response", "")
         if not isinstance(content, str) or not content.strip():
-            return None
+            raise LLMResponseError("Ollama devolveu uma resposta vazia.")
         return self._parse_json_object(content)
 
     def _build_request_body(self, request_payload: LLMRequest) -> dict[str, Any]:
@@ -71,7 +71,7 @@ class OllamaLLM:
             "prompt": prompt,
         }
 
-    def _parse_json_object(self, content: str) -> dict[str, Any] | None:
+    def _parse_json_object(self, content: str) -> dict[str, Any]:
         cleaned = content.strip()
         if cleaned.startswith("```"):
             cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned
@@ -94,4 +94,4 @@ class OllamaLLM:
                 continue
             if isinstance(parsed, dict):
                 return parsed
-        return None
+        raise LLMResponseError("Ollama não devolveu um objeto JSON válido.")

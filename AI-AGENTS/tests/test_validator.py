@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from infra_agents.agents.validator import ValidatorAgent
 from infra_agents.tools.command_runner import CommandResult
-from infra_agents.tools.terraform_cli import local_validation_workspace
+from infra_agents.tools.terraform_cli import local_validation_workspace, run_security_scanners
 
 
 class TerraformValidationWorkspaceTests(unittest.TestCase):
@@ -89,6 +89,46 @@ class ValidatorAgentPlanTests(unittest.TestCase):
         self.assertTrue(results[0].skipped)
         self.assertEqual(results[0].reason, "Skipped in credentialless validation mode")
         self.assertEqual(agent._to_findings(results[0], source="terraform"), [])
+
+
+class SecurityScannerCommandTests(unittest.TestCase):
+    def test_run_security_scanners_uses_checkov_external_modules_and_trivy_when_available(self):
+        captured_commands: list[list[str]] = []
+
+        def fake_run_command(command: list[str], cwd: Path) -> CommandResult:
+            captured_commands.append(command)
+            return CommandResult(command=command, returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("infra_agents.tools.terraform_cli.run_command", side_effect=fake_run_command):
+                with patch("infra_agents.tools.terraform_cli.shutil.which") as mock_which:
+                    mock_which.side_effect = lambda tool: "/opt/homebrew/bin/trivy" if tool == "trivy" else f"/usr/bin/{tool}"
+                    run_security_scanners(Path(tmp))
+
+        self.assertEqual(
+            captured_commands[2],
+            ["checkov", "-d", ".", "--download-external-modules", "true", "--skip-path", ".external_modules"],
+        )
+        self.assertEqual(
+            captured_commands[3],
+            [
+                "trivy",
+                "config",
+                "--skip-check-update",
+                "--skip-version-check",
+                "--disable-telemetry",
+                "--tf-exclude-downloaded-modules",
+                "--tf-vars",
+                "terraform.tfvars",
+                "--skip-dirs",
+                ".external_modules",
+                "--misconfig-scanners",
+                "terraform",
+                "--exit-code",
+                "1",
+                ".",
+            ],
+        )
 
 
 if __name__ == "__main__":

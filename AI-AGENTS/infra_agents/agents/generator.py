@@ -5,7 +5,7 @@ from pathlib import Path
 
 from infra_agents.agents.base import BaseAgent
 from infra_agents.contracts import AgentResult
-from infra_agents.llm import AgentLLM, LLMRequest, NoopLLM
+from infra_agents.llm import AgentLLM, LLMRequest
 from infra_agents.rag import LocalKnowledgeBase
 from infra_agents.tools.filesystem import write_text
 
@@ -15,11 +15,11 @@ class TerraformGeneratorAgent(BaseAgent):
 
     def __init__(
         self,
+        llm: AgentLLM,
         knowledge_base: LocalKnowledgeBase | None = None,
-        llm: AgentLLM | None = None,
     ):
         self.knowledge_base = knowledge_base or LocalKnowledgeBase()
-        self.llm = llm or NoopLLM()
+        self.llm = llm
 
     def run(self, state):  # type: ignore[override]
         if state.spec is None:
@@ -37,7 +37,6 @@ class TerraformGeneratorAgent(BaseAgent):
         rag_sources = [hit.source for hit in rag_hits]
         rag_context = self.knowledge_base.render_context(rag_hits)
         tfvars_overrides: dict[str, str | int | float] = {}
-        llm_used = False
         llm_payload = self.llm.generate_structured(
             LLMRequest(
                 task="generator_overrides_v1",
@@ -46,11 +45,9 @@ class TerraformGeneratorAgent(BaseAgent):
                 schema_name="GeneratorOverrides",
             )
         )
-        if isinstance(llm_payload, dict) and llm_payload:
-            maybe_overrides = llm_payload.get("tfvars_overrides", {})
-            if isinstance(maybe_overrides, dict):
-                tfvars_overrides = self._sanitize_tfvars_overrides(maybe_overrides, spec)
-                llm_used = bool(tfvars_overrides)
+        maybe_overrides = llm_payload.get("tfvars_overrides", {})
+        if isinstance(maybe_overrides, dict):
+            tfvars_overrides = self._sanitize_tfvars_overrides(maybe_overrides, spec)
 
         artifacts = [
             write_text(root / "versions.tf", self._versions_tf(rag_sources)),
@@ -70,7 +67,7 @@ class TerraformGeneratorAgent(BaseAgent):
             artifacts=artifacts,
             findings=[],
             next_action="validate",
-            metadata={"rag_sources": rag_sources, "llm_used": llm_used, "tfvars_overrides": tfvars_overrides},
+            metadata={"rag_sources": rag_sources, "llm_used": True, "tfvars_overrides": tfvars_overrides},
         )
 
     def _versions_tf(self, rag_sources: list[str]) -> str:
@@ -257,6 +254,8 @@ variable "log_kms_key_id" {
 locals {{
   service_name          = "app"
   name_prefix           = "${{var.env}}-${{local.service_name}}"
+  app_kms_key_arn       = var.log_kms_key_id != "" ? var.log_kms_key_id : aws_kms_key.app[0].arn
+  container_image       = "${{data.aws_caller_identity.current.account_id}}.dkr.ecr.${{data.aws_region.current.name}}.amazonaws.com/${{local.service_name}}:latest"
   compute_principal     = var.compute_type == "ecs" ? "ecs-tasks.amazonaws.com" : (var.compute_type == "eks" ? "eks.amazonaws.com" : "ec2.amazonaws.com")
   db_log_exports        = var.db_engine == "postgres" ? ["postgresql", "upgrade"] : ["error", "general", "slowquery"]
   allow_public_subnets  = {public_access}
@@ -270,6 +269,10 @@ data "aws_availability_zones" "available" {{
   state = "available"
 }}
 
+data "aws_prefix_list" "s3" {{
+  name = "com.amazonaws.${{data.aws_region.current.name}}.s3"
+}}
+
 check "aws_account_match" {{
   assert {{
     condition     = var.expected_account_id == "" || data.aws_caller_identity.current.account_id == var.expected_account_id
@@ -277,20 +280,42 @@ check "aws_account_match" {{
   }}
 }}
 
-module "vpc" {{
-  source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 5.0"
+resource "aws_kms_key" "app" {{
+  count = var.log_kms_key_id == "" ? 1 : 0
 
-  name                 = "${{local.name_prefix}}-vpc"
-  cidr                 = var.vpc_cidr
-  azs                  = slice(data.aws_availability_zones.available.names, 0, var.az_count)
-  public_subnets       = var.public_subnets
-  private_subnets      = var.private_subnets
+  description             = "KMS key for app logs and database insights"
+  deletion_window_in_days = 7
+  enable_key_rotation     = true
+
+  tags = var.tags
+}}
+
+resource "aws_kms_alias" "app" {{
+  count = var.log_kms_key_id == "" ? 1 : 0
+
+  name          = "alias/${{local.name_prefix}}-app"
+  target_key_id = aws_kms_key.app[0].key_id
+}}
+
+module "vpc" {{
+  source = "git::https://github.com/terraform-aws-modules/terraform-aws-vpc.git?ref=7c1f791efd61f326ed6102d564d1a65d1eceedf0"
+
+  name                                   = "${{local.name_prefix}}-vpc"
+  cidr                                   = var.vpc_cidr
+  azs                                    = slice(data.aws_availability_zones.available.names, 0, var.az_count)
+  public_subnets                         = var.public_subnets
+  private_subnets                        = var.private_subnets
+  enable_flow_log                        = true
+  flow_log_destination_type              = "cloud-watch-logs"
+  create_flow_log_cloudwatch_iam_role    = true
+  create_flow_log_cloudwatch_log_group   = true
+  flow_log_cloudwatch_log_group_retention_in_days = 365
+  flow_log_cloudwatch_log_group_kms_key_id        = local.app_kms_key_arn
   map_public_ip_on_launch = local.allow_public_subnets
-  enable_dns_hostnames = true
-  enable_dns_support   = true
-  enable_nat_gateway   = true
-  single_nat_gateway   = var.env != "prod"
+  enable_dns_hostnames    = true
+  enable_dns_support      = true
+  enable_nat_gateway      = true
+  single_nat_gateway      = var.env != "prod"
   one_nat_gateway_per_az = var.env == "prod"
 
   tags = var.tags
@@ -298,8 +323,8 @@ module "vpc" {{
 
 resource "aws_cloudwatch_log_group" "app" {{
   name              = "/${{var.env}}/app"
-  retention_in_days = 30
-  kms_key_id        = var.log_kms_key_id != "" ? var.log_kms_key_id : null
+  retention_in_days = 365
+  kms_key_id        = local.app_kms_key_arn
   tags              = var.tags
 }}
 
@@ -317,10 +342,19 @@ resource "aws_security_group" "app" {{
   }}
 
   egress {{
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTPS to internal endpoints inside the VPC"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+  }}
+
+  egress {{
+    description     = "HTTPS to S3 through the managed prefix list"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    prefix_list_ids = [data.aws_prefix_list.s3.id]
   }}
 
   tags = var.tags
@@ -344,6 +378,8 @@ resource "aws_iam_role" "compute" {{
 }}
 
 data "aws_iam_policy_document" "compute_runtime" {{
+  count = var.compute_type == "ecs" ? 0 : 1
+
   statement {{
     sid = "Logs"
     actions = [
@@ -351,7 +387,10 @@ data "aws_iam_policy_document" "compute_runtime" {{
       "logs:CreateLogStream",
       "logs:PutLogEvents",
     ]
-    resources = ["*"]
+    resources = [
+      aws_cloudwatch_log_group.app.arn,
+      "${{aws_cloudwatch_log_group.app.arn}}:*",
+    ]
   }}
 
   statement {{
@@ -367,14 +406,32 @@ data "aws_iam_policy_document" "compute_runtime" {{
 }}
 
 resource "aws_iam_policy" "compute_runtime" {{
+  count = var.compute_type == "ecs" ? 0 : 1
+
   name_prefix = "${{local.name_prefix}}-runtime-"
-  policy      = data.aws_iam_policy_document.compute_runtime.json
+  policy      = data.aws_iam_policy_document.compute_runtime[0].json
   tags        = var.tags
 }}
 
 resource "aws_iam_role_policy_attachment" "compute_runtime" {{
+  count = var.compute_type == "ecs" ? 0 : 1
+
   role       = aws_iam_role.compute.name
-  policy_arn = aws_iam_policy.compute_runtime.arn
+  policy_arn = aws_iam_policy.compute_runtime[0].arn
+}}
+
+resource "aws_iam_role" "ecs_execution" {{
+  count = var.compute_type == "ecs" ? 1 : 0
+
+  name_prefix        = "${{local.name_prefix}}-exec-"
+  assume_role_policy = data.aws_iam_policy_document.compute_assume_role.json
+  tags               = var.tags
+}}
+
+resource "aws_iam_role_policy_attachment" "ecs_execution_managed" {{
+  count      = var.compute_type == "ecs" ? 1 : 0
+  role       = aws_iam_role.ecs_execution[0].name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }}
 
 resource "aws_iam_role_policy_attachment" "ec2_ssm" {{
@@ -446,6 +503,70 @@ resource "aws_ecs_cluster" "main" {{
   tags = var.tags
 }}
 
+resource "aws_ecs_task_definition" "app" {{
+  count = var.compute_type == "ecs" ? 1 : 0
+
+  family                   = "${{local.name_prefix}}-task"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = var.autoscaling ? "512" : "256"
+  memory                   = var.autoscaling ? "1024" : "512"
+  execution_role_arn       = aws_iam_role.ecs_execution[0].arn
+  task_role_arn            = aws_iam_role.compute.arn
+
+  container_definitions = jsonencode([
+    {{
+      name                   = local.service_name
+      image                  = local.container_image
+      essential              = true
+      readonlyRootFilesystem = true
+      portMappings = [
+        {{
+          containerPort = 80
+          hostPort      = 80
+          protocol      = "tcp"
+        }}
+      ]
+      logConfiguration = {{
+        logDriver = "awslogs"
+        options = {{
+          awslogs-group         = aws_cloudwatch_log_group.app.name
+          awslogs-region        = data.aws_region.current.name
+          awslogs-stream-prefix = local.service_name
+        }}
+      }}
+    }}
+  ])
+
+  tags = var.tags
+}}
+
+resource "aws_ecs_service" "app" {{
+  count = var.compute_type == "ecs" ? 1 : 0
+
+  name                   = "${{local.name_prefix}}-svc"
+  cluster                = aws_ecs_cluster.main[0].id
+  task_definition        = aws_ecs_task_definition.app[0].arn
+  desired_count          = var.autoscaling ? 2 : 1
+  launch_type            = "FARGATE"
+  enable_execute_command = true
+
+  network_configuration {{
+    subnets          = module.vpc.private_subnets
+    security_groups  = [aws_security_group.app.id]
+    assign_public_ip = false
+  }}
+
+  deployment_minimum_healthy_percent = 50
+  deployment_maximum_percent         = 200
+
+  depends_on = [
+    aws_iam_role_policy_attachment.ecs_execution_managed,
+  ]
+
+  tags = var.tags
+}}
+
 resource "terraform_data" "eks_cluster_placeholder" {{
   count = var.compute_type == "eks" ? 1 : 0
   input = {{
@@ -460,21 +581,52 @@ resource "aws_db_subnet_group" "main" {{
   tags       = var.tags
 }}
 
+data "aws_iam_policy_document" "rds_monitoring_assume_role" {{
+  statement {{
+    actions = ["sts:AssumeRole"]
+
+    principals {{
+      type        = "Service"
+      identifiers = ["monitoring.rds.amazonaws.com"]
+    }}
+  }}
+}}
+
+resource "aws_iam_role" "rds_monitoring" {{
+  count = var.db_enabled ? 1 : 0
+
+  name_prefix        = "${{local.name_prefix}}-rds-monitor-"
+  assume_role_policy = data.aws_iam_policy_document.rds_monitoring_assume_role.json
+  tags               = var.tags
+}}
+
+resource "aws_iam_role_policy_attachment" "rds_monitoring" {{
+  count = var.db_enabled ? 1 : 0
+
+  role       = aws_iam_role.rds_monitoring[0].name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
+}}
+
 resource "aws_db_instance" "main" {{
-  count                        = var.db_enabled ? 1 : 0
-  identifier                   = "${{local.name_prefix}}-db"
-  allocated_storage            = var.db_allocated_storage
-  engine                       = var.db_engine
-  instance_class               = var.db_instance_class
-  username                     = "appadmin"
-  manage_master_user_password  = true
-  db_subnet_group_name         = aws_db_subnet_group.main[0].name
-  vpc_security_group_ids       = [aws_security_group.app.id]
-  publicly_accessible          = false
-  multi_az                     = var.db_multi_az
-  storage_encrypted            = true
-  skip_final_snapshot          = var.env != "prod"
-  backup_retention_period      = var.db_backups ? 7 : 0
+  count                           = var.db_enabled ? 1 : 0
+  identifier                      = "${{local.name_prefix}}-db"
+  allocated_storage               = var.db_allocated_storage
+  engine                          = var.db_engine
+  instance_class                  = var.db_instance_class
+  username                        = "appadmin"
+  manage_master_user_password     = true
+  db_subnet_group_name            = aws_db_subnet_group.main[0].name
+  vpc_security_group_ids          = [aws_security_group.app.id]
+  publicly_accessible             = false
+  multi_az                        = var.db_multi_az
+  storage_encrypted               = true
+  iam_database_authentication_enabled = true
+  auto_minor_version_upgrade      = true
+  monitoring_interval             = 60
+  monitoring_role_arn             = aws_iam_role.rds_monitoring[0].arn
+  performance_insights_kms_key_id = local.app_kms_key_arn
+  skip_final_snapshot             = var.env != "prod"
+  backup_retention_period         = var.db_backups ? 7 : 0
   enabled_cloudwatch_logs_exports = local.db_log_exports
   performance_insights_enabled = true
   deletion_protection          = var.env == "prod"
@@ -525,6 +677,11 @@ output "compute_iam_role_arn" {
 output "ecs_cluster_name" {
   value       = var.compute_type == "ecs" ? aws_ecs_cluster.main[0].name : null
   description = "ECS cluster name when compute_type=ecs"
+}
+
+output "ecs_service_name" {
+  value       = var.compute_type == "ecs" ? aws_ecs_service.app[0].name : null
+  description = "ECS service name when compute_type=ecs"
 }
 
 output "rds_endpoint" {

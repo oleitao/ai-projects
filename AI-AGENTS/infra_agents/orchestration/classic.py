@@ -15,7 +15,7 @@ from infra_agents.rag import LocalKnowledgeBase
 
 
 class ClassicWorkflowSupervisor:
-    """Existing deterministic workflow without LangGraph runtime."""
+    """Classic workflow supervisor without LangGraph runtime."""
 
     def __init__(self, max_iterations: int = 3):
         self.max_iterations = max_iterations

@@ -12,15 +12,16 @@ class LLMRequest:
     schema_name: str
 
 
+class LLMConfigurationError(RuntimeError):
+    """Raised when the configured LLM backend is invalid."""
+
+
+class LLMResponseError(RuntimeError):
+    """Raised when the LLM backend does not return usable structured data."""
+
+
 class AgentLLM(Protocol):
     """Structured generation interface used by agents."""
 
-    def generate_structured(self, request: LLMRequest) -> dict[str, Any] | None:
-        """Return structured output for a task or None when no prediction is available."""
-
-
-class NoopLLM:
-    """Default implementation that disables LLM generation."""
-
-    def generate_structured(self, request: LLMRequest) -> dict[str, Any] | None:  # noqa: ARG002
-        return None
+    def generate_structured(self, request: LLMRequest) -> dict[str, Any]:
+        """Return structured output for a task."""

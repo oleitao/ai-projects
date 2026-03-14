@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from infra_agents.llm.base import LLMRequest
+from infra_agents.llm.base import LLMRequest, LLMResponseError
 
 
 @dataclass(slots=True)
@@ -41,10 +41,12 @@ class ReplayLLM:
             )
         return cls(examples)
 
-    def generate_structured(self, request: LLMRequest) -> dict[str, Any] | None:
+    def generate_structured(self, request: LLMRequest) -> dict[str, Any]:
         for example in self.examples:
             if example.task != request.task:
                 continue
             if example.prompt_contains.lower() in request.prompt.lower():
                 return example.output
-        return None
+        raise LLMResponseError(
+            f"Nenhum exemplo replay correspondeu a task={request.task!r} para o prompt fornecido."
+        )

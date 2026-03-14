@@ -21,10 +21,41 @@ def run_security_scanners(workdir: Path) -> list[CommandResult]:
     commands = [
         ["tflint", "--init"],
         ["tflint"],
-        ["checkov", "-d", "."],
-        ["tfsec", "."],
+        [
+            "checkov",
+            "-d",
+            ".",
+            "--download-external-modules",
+            "true",
+            "--skip-path",
+            ".external_modules",
+        ],
+        _security_config_scanner_command(),
     ]
     return [run_command(cmd, workdir) for cmd in commands]
+
+
+def _security_config_scanner_command() -> list[str]:
+    if shutil.which("trivy") is not None:
+        return [
+            "trivy",
+            "config",
+            "--skip-check-update",
+            "--skip-version-check",
+            "--disable-telemetry",
+            "--tf-exclude-downloaded-modules",
+            "--tf-vars",
+            "terraform.tfvars",
+            "--skip-dirs",
+            ".external_modules",
+            "--misconfig-scanners",
+            "terraform",
+            "--exit-code",
+            "1",
+            ".",
+        ]
+
+    return ["tfsec", "."]
 
 
 @contextmanager

@@ -52,7 +52,7 @@ python -m infra_agents.cli --prompt-file examples/prompt.txt --engine classic
 
 ## Live mode (modelo local no Ollama)
 
-Também podes usar o Ollama local para correr o modelo no pipeline:
+O Ollama local é agora o runtime default do pipeline. Se quiseres explicitar a configuração:
 
 ```bash
 export INFRA_AGENTS_LLM_MODE=ollama
@@ -61,4 +61,4 @@ export INFRA_AGENTS_LLM_MODEL=llama3.2:latest
 python -m infra_agents.cli --prompt-file examples/prompt.txt --engine classic
 ```
 
-O runtime continua a usar fallback determinístico sempre que o modelo não devolve JSON válido.
+Se o modelo não devolver JSON válido, a execução falha explicitamente.

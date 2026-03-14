@@ -8,8 +8,8 @@ from unittest.mock import Mock, patch
 from infra_agents.agents.requirements import RequirementsAgent
 from infra_agents.agents.generator import TerraformGeneratorAgent
 from infra_agents.agents.planner import ArchitecturePlannerAgent
-from infra_agents.contracts import JobState
-from infra_agents.llm import build_llm_from_env
+from infra_agents.contracts import InfrastructureSpec, JobState
+from infra_agents.llm import LLMConfigurationError, LLMResponseError, build_llm_from_env
 from infra_agents.llm.base import LLMRequest
 from infra_agents.llm.ollama import OllamaLLM
 from infra_agents.rag import LocalKnowledgeBase
@@ -127,7 +127,52 @@ class _FakeHTTPResponse:
         return False
 
 
+def _valid_requirements_spec() -> dict:
+    return {
+        "cloud": "aws",
+        "region": "eu-west-1",
+        "env": "prod",
+        "aws": {
+            "account_id": "123456789012",
+            "profile": "",
+            "backend_bucket": "tfstate-prod-123456789012",
+            "backend_dynamodb_table": "tfstate-locks-prod",
+            "backend_key_prefix": "infra-agents",
+        },
+        "network": {
+            "vpc_cidr": "10.0.0.0/16",
+            "public_subnets": ["10.0.1.0/24", "10.0.2.0/24"],
+            "private_subnets": ["10.0.11.0/24", "10.0.12.0/24"],
+        },
+        "compute": {"type": "ecs", "sizing": "small", "autoscaling": True},
+        "data": {"rds": True, "engine": "postgres", "multi_az": True, "backups": True},
+        "security": {"encryption": True, "public_access": False},
+        "tags": {"owner": "team", "cost_center": "cc100"},
+    }
+
+
+def _build_state(tmp: str, prompt: str) -> JobState:
+    return JobState(
+        job_id="test",
+        prompt=prompt,
+        workspace=Path(tmp),
+        execution_mode="plan-only",
+        max_iterations=1,
+        status="running",
+    )
+
+
 class LLMOllamaTests(unittest.TestCase):
+    def test_factory_defaults_to_ollama_llm(self):
+        with patch.dict(os.environ, {}, clear=True):
+            llm = build_llm_from_env()
+            self.assertIsInstance(llm, OllamaLLM)
+
+    def test_factory_rejects_disabled_mode(self):
+        with patch.dict(os.environ, {"INFRA_AGENTS_LLM_MODE": "off"}, clear=True):
+            with self.assertRaises(LLMConfigurationError):
+                build_llm_from_env()
+
     def test_factory_returns_ollama_llm(self):
         with patch.dict(
             os.environ,
@@ -177,7 +222,90 @@ class LLMOllamaTests(unittest.TestCase):
 
 
 class RequirementsAgentFallbackTests(unittest.TestCase):
-    def test_invalid_llm_spec_falls_back_to_heuristics(self):
+    def test_sparse_llm_spec_is_normalized_and_used(self):
+        kb = LocalKnowledgeBase(root=Path("infra_agents/knowledge"))
+        llm = Mock()
+        llm.generate_structured.return_value = {
+            "cloud": "aws",
+            "region": "eu-west-1",
+            "env": "prod",
+            "aws": {
+                "account_id": "",
+                "profile": "",
+                "backend_bucket": "",
+                "backend_dynamodb_table": "",
+                "backend_key_prefix": "",
+            },
+            "network": {"vpc_cidr": "", "public_subnets": [], "private_subnets": []},
+            "compute": {"type": "ecs", "sizing": "autoscaling", "autoscaling": True},
+            "data": {"rds": True, "engine": "postgres", "multi_az": False, "backups": True},
+            "security": {"encryption": False, "public_access": False},
+            "tags": {"owner": "", "cost_center": ""},
+        }
+        agent = RequirementsAgent(knowledge_base=kb, llm=llm)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state = JobState(
+                job_id="test",
+                prompt="AWS prod eu-west-1 com ECS autoscaling e RDS postgres, sem acesso publico",
+                workspace=Path(tmp),
+                execution_mode="plan-only",
+                max_iterations=1,
+                status="running",
+            )
+            result = agent.run(state)
+
+        self.assertTrue(result.metadata.get("llm_used"))
+        self.assertEqual(state.spec.aws.backend_bucket, "tfstate-prod-123456789012")
+        self.assertEqual(state.spec.network.public_subnets, ["10.0.1.0/24", "10.0.2.0/24"])
+        self.assertEqual(state.spec.compute.sizing, "small")
+        self.assertTrue(state.spec.data.multi_az)
+        self.assertTrue(state.spec.security.encryption)
+        self.assertFalse(state.spec.security.public_access)
+        self.assertTrue(any("Spec inferida via LLM estruturado" in item for item in state.spec.assumptions))
+
+    def test_single_subnet_llm_spec_is_normalized_and_used(self):
+        kb = LocalKnowledgeBase(root=Path("infra_agents/knowledge"))
+        llm = Mock()
+        llm.generate_structured.return_value = {
+            "cloud": "aws",
+            "region": "eu-west-1",
+            "env": "prod",
+            "aws": {
+                "account_id": "123456789012",
+                "profile": "",
+                "backend_bucket": "tfstate-prod-123456789012",
+                "backend_dynamodb_table": "tfstate-locks-prod",
+                "backend_key_prefix": "infra-agents",
+            },
+            "network": {
+                "vpc_cidr": "10.0.0.0/16",
+                "public_subnets": ["10.0.1.0/24"],
+                "private_subnets": ["10.0.11.0/24"],
+            },
+            "compute": {"type": "ecs", "sizing": "small", "autoscaling": True},
+            "data": {"rds": True, "engine": "postgres", "multi_az": True, "backups": True},
+            "security": {"encryption": True, "public_access": False},
+            "tags": {"owner": "team", "cost_center": "cc100"},
+        }
+        agent = RequirementsAgent(knowledge_base=kb, llm=llm)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state = JobState(
+                job_id="test",
+                prompt="AWS prod eu-west-1 com ECS autoscaling e RDS postgres, sem acesso publico",
+                workspace=Path(tmp),
+                execution_mode="plan-only",
+                max_iterations=1,
+                status="running",
+            )
+            result = agent.run(state)
+
+        self.assertTrue(result.metadata.get("llm_used"))
+        self.assertEqual(state.spec.network.public_subnets, ["10.0.1.0/24", "10.0.2.0/24"])
+        self.assertEqual(state.spec.network.private_subnets, ["10.0.11.0/24", "10.0.12.0/24"])
+
+    def test_invalid_llm_spec_raises_error(self):
         kb = LocalKnowledgeBase(root=Path("infra_agents/knowledge"))
         llm = Mock()
         llm.generate_structured.return_value = {
@@ -194,21 +322,11 @@ class RequirementsAgentFallbackTests(unittest.TestCase):
         agent = RequirementsAgent(knowledge_base=kb, llm=llm)
 
         with tempfile.TemporaryDirectory() as tmp:
-            state = JobState(
-                job_id="test",
-                prompt="AWS prod eu-west-1 com ECS autoscaling e RDS postgres",
-                workspace=Path(tmp),
-                execution_mode="plan-only",
-                max_iterations=1,
-                status="running",
-            )
-            result = agent.run(state)
+            state = _build_state(tmp, "AWS prod eu-west-1 com ECS autoscaling e RDS postgres")
+            with self.assertRaises(LLMResponseError):
+                agent.run(state)
 
-        self.assertFalse(result.metadata.get("llm_used"))
-        self.assertEqual(state.spec.compute.type, "ecs")
-        self.assertTrue(any("LLM devolveu spec inválida" in item for item in state.spec.assumptions))
-
-    def test_inconsistent_llm_spec_falls_back_to_heuristics(self):
+    def test_inconsistent_llm_spec_raises_error(self):
         kb = LocalKnowledgeBase(root=Path("infra_agents/knowledge"))
         llm = Mock()
         llm.generate_structured.return_value = {
@@ -235,19 +353,9 @@ class RequirementsAgentFallbackTests(unittest.TestCase):
         agent = RequirementsAgent(knowledge_base=kb, llm=llm)
 
         with tempfile.TemporaryDirectory() as tmp:
-            state = JobState(
-                job_id="test",
-                prompt="AWS prod eu-west-1 com ECS autoscaling e RDS postgres",
-                workspace=Path(tmp),
-                execution_mode="plan-only",
-                max_iterations=1,
-                status="running",
-            )
-            result = agent.run(state)
-
-        self.assertFalse(result.metadata.get("llm_used"))
-        self.assertEqual(state.spec.compute.type, "ecs")
-        self.assertTrue(any("LLM devolveu spec inconsistente" in item for item in state.spec.assumptions))
+            state = _build_state(tmp, "AWS prod eu-west-1 com ECS autoscaling e RDS postgres")
+            with self.assertRaises(LLMResponseError):
+                agent.run(state)
 
 
 class PlannerAndGeneratorGuardrailTests(unittest.TestCase):
@@ -265,15 +373,8 @@ class PlannerAndGeneratorGuardrailTests(unittest.TestCase):
         agent = ArchitecturePlannerAgent(knowledge_base=kb, llm=llm)
 
         with tempfile.TemporaryDirectory() as tmp:
-            state = JobState(
-                job_id="test",
-                prompt="AWS prod eu-west-1 com ECS e RDS postgres",
-                workspace=Path(tmp),
-                execution_mode="plan-only",
-                max_iterations=1,
-                status="running",
-            )
-            RequirementsAgent(knowledge_base=kb).run(state)
+            state = _build_state(tmp, "AWS prod eu-west-1 com ECS e RDS postgres")
+            state.spec = InfrastructureSpec.from_dict(_valid_requirements_spec())
             result = agent.run(state)
 
         self.assertTrue(result.metadata.get("llm_used"))
@@ -298,15 +399,8 @@ class PlannerAndGeneratorGuardrailTests(unittest.TestCase):
         agent = TerraformGeneratorAgent(knowledge_base=kb, llm=llm)
 
         with tempfile.TemporaryDirectory() as tmp:
-            state = JobState(
-                job_id="test",
-                prompt="AWS prod eu-west-1 com ECS e RDS postgres",
-                workspace=Path(tmp),
-                execution_mode="plan-only",
-                max_iterations=1,
-                status="running",
-            )
-            RequirementsAgent(knowledge_base=kb).run(state)
+            state = _build_state(tmp, "AWS prod eu-west-1 com ECS e RDS postgres")
+            state.spec = InfrastructureSpec.from_dict(_valid_requirements_spec())
             result = agent.run(state)
 
         self.assertTrue(result.metadata.get("llm_used"))
@@ -323,15 +417,8 @@ class PlannerAndGeneratorGuardrailTests(unittest.TestCase):
         agent = TerraformGeneratorAgent(knowledge_base=kb, llm=llm)
 
         with tempfile.TemporaryDirectory() as tmp:
-            state = JobState(
-                job_id="test",
-                prompt="AWS prod eu-west-1 com ECS e RDS postgres",
-                workspace=Path(tmp),
-                execution_mode="plan-only",
-                max_iterations=1,
-                status="running",
-            )
-            RequirementsAgent(knowledge_base=kb).run(state)
+            state = _build_state(tmp, "AWS prod eu-west-1 com ECS e RDS postgres")
+            state.spec = InfrastructureSpec.from_dict(_valid_requirements_spec())
             result = agent.run(state)
 
         self.assertTrue(result.metadata.get("llm_used"))
@@ -339,7 +426,7 @@ class PlannerAndGeneratorGuardrailTests(unittest.TestCase):
 
     def test_generator_prompt_includes_defaults_and_rules(self):
         kb = LocalKnowledgeBase(root=Path("infra_agents/knowledge"))
-        agent = TerraformGeneratorAgent(knowledge_base=kb)
+        agent = TerraformGeneratorAgent(knowledge_base=kb, llm=Mock())
         spec = {
             "region": "eu-west-1",
             "env": "prod",
