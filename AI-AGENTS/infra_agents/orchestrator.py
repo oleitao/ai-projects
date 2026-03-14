@@ -37,6 +37,11 @@ class WorkflowSupervisor:
             validation_mode=validation_mode,
         )
 
+    def resume(self, workspace: Path) -> JobState:
+        if not hasattr(self._impl, "resume"):
+            raise RuntimeError(f"Engine {self.engine} não suporta resume.")
+        return self._impl.resume(workspace)
+
     def _resolve_engine(self, engine: str) -> str:
         allowed = {"auto", "classic", "langgraph"}
         if engine not in allowed:

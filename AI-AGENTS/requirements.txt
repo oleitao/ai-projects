@@ -1,0 +1,5 @@
+# Instala o pacote local com as dependências opcionais da runtime LangGraph.
+-e .[langgraph]
+
+# Dependência usada para correr a suite conforme documentado no README.
+pytest>=8.0

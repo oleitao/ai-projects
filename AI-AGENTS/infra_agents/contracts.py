@@ -120,6 +120,25 @@ class AgentFinding:
     file: str | None = None
     line: int | None = None
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "severity": self.severity,
+            "message": self.message,
+            "source": self.source,
+            "file": self.file,
+            "line": self.line,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "AgentFinding":
+        return cls(
+            severity=str(payload.get("severity", "info")),
+            message=str(payload.get("message", "")),
+            source=str(payload.get("source", "")),
+            file=payload.get("file"),
+            line=payload.get("line"),
+        )
+
 
 @dataclass(slots=True)
 class AgentResult:
@@ -142,9 +161,12 @@ class JobState:
     artifacts: list[str] = field(default_factory=list)
     findings: list[AgentFinding] = field(default_factory=list)
     history: list[dict[str, Any]] = field(default_factory=list)
+    runtime_trace: list[dict[str, Any]] = field(default_factory=list)
     iteration: int = 0
     blocked: bool = False
     status: str = "created"
+    current_step: str | None = None
+    next_step: str | None = None
 
     def add_result(self, result: AgentResult) -> None:
         self.artifacts.extend(result.artifacts)
@@ -158,8 +180,77 @@ class JobState:
             }
         )
 
+    def add_runtime_trace(
+        self,
+        *,
+        step: str,
+        status: str,
+        started_at: str,
+        finished_at: str,
+        duration_ms: int,
+        attempt: int,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        self.runtime_trace.append(
+            {
+                "step": step,
+                "status": status,
+                "started_at": started_at,
+                "finished_at": finished_at,
+                "duration_ms": duration_ms,
+                "attempt": attempt,
+                "details": details or {},
+            }
+        )
+
     def has_errors(self) -> bool:
         return any(f.severity == "error" for f in self.findings)
 
     def has_critical(self) -> bool:
         return any(f.severity == "critical" for f in self.findings)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "job_id": self.job_id,
+            "prompt": self.prompt,
+            "workspace": str(self.workspace),
+            "execution_mode": self.execution_mode,
+            "validation_mode": self.validation_mode,
+            "max_iterations": self.max_iterations,
+            "spec": self.spec.to_dict() if self.spec else None,
+            "artifacts": list(self.artifacts),
+            "findings": [finding.to_dict() for finding in self.findings],
+            "history": list(self.history),
+            "runtime_trace": list(self.runtime_trace),
+            "iteration": self.iteration,
+            "blocked": self.blocked,
+            "status": self.status,
+            "current_step": self.current_step,
+            "next_step": self.next_step,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "JobState":
+        spec_payload = payload.get("spec")
+        return cls(
+            job_id=str(payload.get("job_id", "")),
+            prompt=str(payload.get("prompt", "")),
+            workspace=Path(payload.get("workspace", ".")),
+            execution_mode=str(payload.get("execution_mode", "plan-only")),
+            validation_mode=str(payload.get("validation_mode", "auto")),
+            max_iterations=int(payload.get("max_iterations", 3)),
+            spec=InfrastructureSpec.from_dict(spec_payload) if isinstance(spec_payload, dict) else None,
+            artifacts=list(payload.get("artifacts", [])),
+            findings=[
+                AgentFinding.from_dict(item)
+                for item in payload.get("findings", [])
+                if isinstance(item, dict)
+            ],
+            history=list(payload.get("history", [])),
+            runtime_trace=list(payload.get("runtime_trace", [])),
+            iteration=int(payload.get("iteration", 0)),
+            blocked=bool(payload.get("blocked", False)),
+            status=str(payload.get("status", "created")),
+            current_step=payload.get("current_step"),
+            next_step=payload.get("next_step"),
+        )
