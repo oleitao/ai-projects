@@ -136,6 +136,12 @@ Isto significa que o objetivo não é reescrever os agentes de negócio com abst
 - retries por etapa
 - melhor observabilidade por node
 
+Estado atual da implementação V2:
+- `checkpointing` por workspace já está implementado para a engine `langgraph`
+- `resume` de jobs já está disponível em CLI e API quando a engine ativa é `langgraph`
+- `summary.json` já inclui `runtime_trace`, `current_step` e `next_step`
+- a engine `classic` mantém-se como fallback, mas não suporta `resume` nesta fase
+
 ## Decisão sobre LangGraph e LangChain
 
 ### LangGraph
@@ -331,6 +337,18 @@ Parâmetros úteis:
 - `--execution-mode` (atual: apenas `plan-only`)
 - `--engine` (`auto`, `classic`, `langgraph`)
 - `--validation-mode` (`auto`, `credentialless`)
+- `--resume-workspace` (retoma um job existente a partir do respetivo workspace; disponível na prática com `langgraph`)
+
+Retomar um job existente:
+
+```bash
+python -m infra_agents.cli --engine langgraph --resume-workspace jobs/<job_id>
+```
+
+Notas:
+- `resume` depende da existência de `runtime_checkpoint.json` no workspace do job
+- se o job já tiver terminado (`next_step = null`), o resume falha explicitamente
+- a engine `classic` não suporta `resume` nesta fase
 
 Modo `auto`:
 - executa `terraform fmt`, `terraform init -backend=false`, `terraform validate`
@@ -501,6 +519,16 @@ curl -X POST http://127.0.0.1:8080/jobs \
 
 A resposta inclui `job_id`, `status`, `workspace`, `summary_file` e `engine`.
 
+Retomar job:
+
+```bash
+curl -X POST http://127.0.0.1:8080/jobs/resume \
+  -H 'content-type: application/json' \
+  -d '{"workspace":"jobs/<job_id>"}'
+```
+
+No endpoint de resume, a resposta inclui também `next_step`, que representa o próximo node previsto no grafo.
+
 ## Outputs do job
 
 Cada execução cria `jobs/<job_id>/` com artefactos como:
@@ -508,11 +536,17 @@ Cada execução cria `jobs/<job_id>/` com artefactos como:
 - `design.md`
 - `main.tf`, `variables.tf`, `outputs.tf`, `providers.tf`, `versions.tf`
 - `backend.tf`, `backend.hcl.example`, `terraform.tfvars`
+- `runtime_checkpoint.json` (quando a engine é `langgraph`)
 - `reports/validation.json`
 - `reports/security.json`
 - `reports/cost.json`
 - `reports/infracost.json` (quando o `infracost` está configurado)
 - `summary.json`
+
+Metadados adicionais de runtime:
+- `summary.json.runtime_trace`: telemetria por node, com `step`, `status`, timestamps, duração e tentativa
+- `summary.json.current_step`: step atualmente em execução no momento do snapshot
+- `summary.json.next_step`: próximo step previsto; `null` quando o job termina
 
 ## Guardrails implementados
 
@@ -546,6 +580,20 @@ Cada execução cria `jobs/<job_id>/` com artefactos como:
 - `failed`: erros de validação após esgotar iterações
 - `done`: finalizado sem necessidade de validação adicional
 
+## Runtime LangGraph
+
+Capacidades já implementadas na runtime `langgraph`:
+- dispatch por `next_step`, o que permite retomar o fluxo sem reiniciar desde o início
+- persistência de checkpoint em `runtime_checkpoint.json`
+- telemetria por node em `runtime_trace`
+- suporte a `resume` via `WorkflowSupervisor`, CLI e API
+
+Capacidades ainda previstas no roadmap V2:
+- `human-in-the-loop`
+- paralelismo real entre validação e segurança
+- retries/timeouts explícitos por node
+- subgraphs por fase de negócio
+
 ## Testes
 
 ```bash
@@ -554,11 +602,24 @@ PYTHONPATH=. pytest -q
 
 Este é o comando de baseline usado na análise V2. Se preferires `python -m pytest`, instala primeiro o pacote no ambiente com `pip install -e .`.
 
+Para validar também o caminho real de `langgraph`, instala as dependências opcionais e corre:
+
+```bash
+python -m unittest discover -s tests -q
+```
+
+Cobertura relevante já incluída:
+- equivalência básica entre engines `classic` e `langgraph`
+- criação de `runtime_checkpoint.json`
+- presença de `runtime_trace` no `summary.json`
+- `resume` após falha intermédia no node `validator` quando `langgraph` está instalado
+
 ## Limitações atuais (MVP)
 
 - EKS ainda está como placeholder de integração
 - em modo `auto`, `terraform plan` continua a depender de provider/plugins e de credenciais/profile AWS válidos
 - em modo `credentialless`, não há `terraform plan`; valida apenas coerência estrutural local
+- `resume` está disponível apenas na engine `langgraph`
 - o passo de custos cai para heurística quando `infracost` não tem `INFRACOST_API_KEY` ou `~/.config/infracost/credentials.yml`
 - os scanners podem continuar a reportar findings reais do Terraform gerado; isso é esperado e faz parte do loop de correção do supervisor
 - não executa `terraform apply`

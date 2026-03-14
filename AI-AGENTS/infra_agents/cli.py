@@ -12,6 +12,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="AI Agents Terraform pipeline")
     parser.add_argument("--prompt", type=str, help="Prompt em texto livre")
     parser.add_argument("--prompt-file", type=Path, help="Ficheiro com o prompt")
+    parser.add_argument("--resume-workspace", type=Path, help="Workspace de job existente para retomar execução")
     parser.add_argument("--output-dir", type=Path, default=Path("jobs"), help="Diretório de outputs")
     parser.add_argument("--max-iterations", type=int, default=3, help="Máximo de loops de correção")
     parser.add_argument(
@@ -39,6 +40,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def _load_prompt(args: argparse.Namespace) -> str:
+    if args.resume_workspace:
+        return ""
     if args.prompt:
         return args.prompt
     if args.prompt_file:
@@ -48,19 +51,25 @@ def _load_prompt(args: argparse.Namespace) -> str:
 
 def main() -> None:
     args = parse_args()
-    prompt = _load_prompt(args)
 
     try:
         supervisor = WorkflowSupervisor(max_iterations=args.max_iterations, engine=args.engine)
     except LangGraphUnavailableError as exc:
         raise SystemExit(str(exc)) from exc
 
-    state = supervisor.run(
-        prompt=prompt,
-        output_root=args.output_dir,
-        execution_mode=args.execution_mode,
-        validation_mode=args.validation_mode,
-    )
+    try:
+        if args.resume_workspace:
+            state = supervisor.resume(args.resume_workspace)
+        else:
+            prompt = _load_prompt(args)
+            state = supervisor.run(
+                prompt=prompt,
+                output_root=args.output_dir,
+                execution_mode=args.execution_mode,
+                validation_mode=args.validation_mode,
+            )
+    except (RuntimeError, ValueError, NotImplementedError) as exc:
+        raise SystemExit(str(exc)) from exc
 
     summary = {
         "job_id": state.job_id,

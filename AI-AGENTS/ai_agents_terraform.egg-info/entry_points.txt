@@ -1,0 +1,3 @@
+[console_scripts]
+infra-agents = infra_agents.cli:main
+infra-agents-api = infra_agents.api:main

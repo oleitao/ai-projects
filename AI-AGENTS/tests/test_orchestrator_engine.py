@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+from infra_agents.agents.validator import ValidatorAgent
 from infra_agents.orchestration import LangGraphUnavailableError, is_langgraph_available
 from infra_agents.orchestrator import WorkflowSupervisor
 
@@ -103,6 +104,49 @@ class OrchestratorEngineTests(unittest.TestCase):
                 )
             self.assertEqual(supervisor.engine, "langgraph")
             self.assertTrue((state.workspace / "summary.json").exists())
+
+            summary = json.loads((state.workspace / "summary.json").read_text(encoding="utf-8"))
+            self.assertIn("runtime_trace", summary)
+            self.assertTrue((state.workspace / "runtime_checkpoint.json").exists())
+
+    def test_langgraph_resume_from_checkpoint_after_failure(self):
+        if not is_langgraph_available():
+            self.skipTest("langgraph not installed")
+
+        original_run = ValidatorAgent.run
+
+        with tempfile.TemporaryDirectory() as tmp:
+            dataset = _write_replay_dataset(tmp)
+            env = {
+                "INFRA_AGENTS_LLM_MODE": "replay",
+                "INFRA_AGENTS_LLM_REPLAY_FILE": str(dataset),
+            }
+
+            with patch.dict("os.environ", env, clear=False):
+                supervisor = WorkflowSupervisor(max_iterations=1, engine="langgraph")
+                with patch.object(ValidatorAgent, "run", side_effect=RuntimeError("validator crashed")):
+                    with self.assertRaises(RuntimeError):
+                        supervisor.run(
+                            prompt="AWS dev eu-west-1 com ECS",
+                            output_root=Path(tmp),
+                            execution_mode="plan-only",
+                        )
+
+                workspaces = [path for path in Path(tmp).iterdir() if path.is_dir()]
+                self.assertEqual(len(workspaces), 1)
+                workspace = workspaces[0]
+
+                checkpoint = json.loads((workspace / "runtime_checkpoint.json").read_text(encoding="utf-8"))
+                self.assertEqual(checkpoint["runtime"]["next_node"], "validator")
+
+                with patch.object(ValidatorAgent, "run", original_run):
+                    resumed_state = supervisor.resume(workspace)
+
+            self.assertIn(resumed_state.status, {"validated", "done", "failed", "blocked"})
+            summary = json.loads((workspace / "summary.json").read_text(encoding="utf-8"))
+            self.assertGreaterEqual(len(summary["runtime_trace"]), 1)
+            self.assertTrue(any(item["step"] == "validator" for item in summary["runtime_trace"]))
+            self.assertIsNone(summary["next_step"])
 
 
 if __name__ == "__main__":

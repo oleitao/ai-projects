@@ -13,7 +13,7 @@ class JobHandler(BaseHTTPRequestHandler):
     output_dir = Path("jobs")
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path != "/jobs":
+        if self.path not in {"/jobs", "/jobs/resume"}:
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "route not found"})
             return
 
@@ -26,16 +26,27 @@ class JobHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid json"})
             return
 
-        prompt = body.get("prompt", "")
-        if not prompt.strip():
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "prompt is required"})
-            return
+        try:
+            if self.path == "/jobs/resume":
+                workspace_value = str(body.get("workspace", "")).strip()
+                if not workspace_value:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "workspace is required"})
+                    return
+                state = self.supervisor.resume(Path(workspace_value))
+            else:
+                prompt = body.get("prompt", "")
+                if not prompt.strip():
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "prompt is required"})
+                    return
 
-        state = self.supervisor.run(
-            prompt=prompt,
-            output_root=self.output_dir,
-            execution_mode="plan-only",
-        )
+                state = self.supervisor.run(
+                    prompt=prompt,
+                    output_root=self.output_dir,
+                    execution_mode="plan-only",
+                )
+        except (RuntimeError, ValueError, NotImplementedError, FileNotFoundError) as exc:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+            return
         self._send_json(
             HTTPStatus.OK,
             {
@@ -44,6 +55,7 @@ class JobHandler(BaseHTTPRequestHandler):
                 "workspace": str(state.workspace),
                 "summary_file": str(state.workspace / "summary.json"),
                 "engine": self.supervisor.engine,
+                "next_step": state.next_step,
             },
         )
 

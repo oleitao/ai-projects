@@ -86,3 +86,6 @@ class ClassicWorkflowSupervisor:
 
         write_job_summary(state)
         return state
+
+    def resume(self, workspace: Path) -> JobState:
+        raise NotImplementedError("Resume só está disponível na engine langgraph nesta fase.")
