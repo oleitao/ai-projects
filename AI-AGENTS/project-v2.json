@@ -1,0 +1,463 @@
+{
+  "title": "AI Agents Terraform Generation - Project V2",
+  "version": "2.0",
+  "status": "proposed",
+  "overview": "Workflow de adopcao recomendado para evoluir o projecto actual com LangGraph de forma pragmatica e com adopcao selectiva de LangChain apenas quando existir um caso de uso claro. A recomendacao base e: aprofundar LangGraph primeiro para durabilidade, observabilidade e controlo do fluxo; adiar LangChain como framework de abstraccao geral ate haver necessidade real de multi-provider, retrieval mais sofisticado ou tool-calling.",
+  "baseline_assessment": {
+    "current_project_shape": [
+      "Pipeline multi-agente estavel e testado",
+      "Dois motores de orquestracao: classic e langgraph",
+      "RAG local simples sobre markdown",
+      "Camada LLM propria, curta e controlada",
+      "Guardrails e contratos fortes entre agentes"
+    ],
+    "validated_state": {
+      "tests_command": "PYTHONPATH=. pytest -q",
+      "tests_result": "30 passed",
+      "notes": [
+        "O projecto actual encontra-se funcional no contexto do repositorio",
+        "A execucao simples de pytest sem instalar o pacote falha por import path"
+      ]
+    },
+    "main_conclusion": {
+      "langgraph_value_now": "medium-high",
+      "langchain_value_now": "low",
+      "recommended_path": "Adoptar LangGraph de forma mais profunda e manter LangChain limitado a integracoes pontuais"
+    }
+  },
+  "decision": {
+    "recommend_langgraph_now": true,
+    "recommend_langchain_now": false,
+    "recommend_langchain_later_if": [
+      "for necessario suportar varios backends LLM com fallbacks",
+      "a base de conhecimento crescer para exigir retriever semantico/vector store",
+      "for adoptado tool-calling estruturado entre agentes",
+      "for necessario normalizar prompts/output parsers/tracing em multiplos componentes"
+    ],
+    "non_goals": [
+      "Nao reescrever todos os agentes em LangChain sem necessidade",
+      "Nao substituir o RAG local por vector DB apenas por moda",
+      "Nao remover a engine classic antes da nova engine estar observavel e validada"
+    ]
+  },
+  "target_architecture": {
+    "primary_engine": "langgraph",
+    "fallback_engine": "classic",
+    "llm_layer": "camada propria actual, mantendo contracts/AgentLLM",
+    "langchain_scope": [
+      "langchain-core como dependencia tecnica do ecossistema LangGraph",
+      "adaptadores opcionais para providers adicionais",
+      "nao usar LangChain Agents genericos como peca central do workflow"
+    ],
+    "future_graph_capabilities": [
+      "checkpointing",
+      "resume de jobs",
+      "human-in-the-loop para aprovacao",
+      "branching e paralelismo controlado",
+      "retries por node",
+      "telemetria por etapa"
+    ]
+  },
+  "workflow": {
+    "adoption_mode": "langgraph-first",
+    "phases": [
+      {
+        "id": "P0",
+        "title": "Baseline e Preparacao",
+        "goal": "Preparar o codigo para aprofundar LangGraph sem perder o comportamento validado da engine actual.",
+        "operations": [
+          {
+            "id": "P0.1",
+            "action": "Congelar comportamento actual como baseline funcional",
+            "details": "Usar a suite de testes existente como contrato minimo e adicionar fixtures para comparar resultados entre engines classic e langgraph.",
+            "target_files": [
+              "tests/test_orchestrator_engine.py",
+              "tests/test_pipeline.py"
+            ],
+            "outputs": [
+              "testes de equivalencia entre engines",
+              "fixtures replay reutilizaveis"
+            ],
+            "done_when": [
+              "classic e langgraph geram artefactos equivalentes para os cenarios suportados",
+              "findings e summary.json mantem compatibilidade basica"
+            ]
+          },
+          {
+            "id": "P0.2",
+            "action": "Explicitar o contracto de estado do workflow",
+            "details": "Separar melhor o estado de negocio do estado transitivo do grafo para evitar mutacoes opacas e facilitar checkpoints.",
+            "target_files": [
+              "infra_agents/contracts.py",
+              "infra_agents/orchestration/common.py",
+              "infra_agents/orchestration/langgraph.py"
+            ],
+            "outputs": [
+              "schema de estado mais explicito",
+              "campos de estado separados por responsabilidade"
+            ],
+            "done_when": [
+              "o GraphState deixa de depender apenas de flags soltas",
+              "o estado do job pode ser serializado de forma clara"
+            ]
+          },
+          {
+            "id": "P0.3",
+            "action": "Documentar estrategia de adopcao",
+            "details": "Actualizar README com a decisao de arquitectura: LangGraph como engine principal evolutiva, classic como fallback, LangChain apenas selectivo.",
+            "target_files": [
+              "README.md",
+              "pyproject.toml"
+            ],
+            "outputs": [
+              "documentacao de decisao",
+              "guia de instalacao por modo"
+            ],
+            "done_when": [
+              "a documentacao explica claramente quando usar classic, langgraph e componentes LangChain"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "P1",
+        "title": "Aprofundar LangGraph",
+        "goal": "Transformar a implementacao actual em LangGraph de um espelho linear para uma runtime com valor operacional real.",
+        "operations": [
+          {
+            "id": "P1.1",
+            "action": "Introduzir checkpointing e resume",
+            "details": "Adicionar persistencia de estado por job para que jobs interrompidos possam ser retomados sem recomecar o workflow inteiro.",
+            "target_files": [
+              "infra_agents/orchestration/langgraph.py",
+              "infra_agents/orchestration/common.py",
+              "infra_agents/orchestrator.py"
+            ],
+            "outputs": [
+              "checkpointer por job",
+              "comando ou metodo de resume"
+            ],
+            "done_when": [
+              "um job interrompido pode retomar a partir do ultimo node consistente",
+              "o resume nao duplica artefactos nem history"
+            ],
+            "priority": "high"
+          },
+          {
+            "id": "P1.2",
+            "action": "Modelar nodes com retries e timeouts explicitos",
+            "details": "Definir politicas por etapa para LLM, validacao e custo, evitando falhas globais desnecessarias.",
+            "target_files": [
+              "infra_agents/orchestration/langgraph.py",
+              "infra_agents/llm/ollama.py",
+              "infra_agents/tools/command_runner.py"
+            ],
+            "outputs": [
+              "politicas de retry por node",
+              "tratamento de timeout por tipo de operacao"
+            ],
+            "done_when": [
+              "falhas transientes deixam de abortar jobs inteiros sem tentativas controladas"
+            ],
+            "priority": "high"
+          },
+          {
+            "id": "P1.3",
+            "action": "Adicionar human-in-the-loop em pontos de decisao",
+            "details": "Criar uma interrupcao opcional antes de aceitar output bloqueado, antes de novo ciclo de regeneracao ou antes de futuras operacoes de apply.",
+            "target_files": [
+              "infra_agents/orchestration/langgraph.py",
+              "infra_agents/api.py",
+              "infra_agents/cli.py"
+            ],
+            "outputs": [
+              "estado pendente de aprovacao",
+              "interface de aprovacao por API/CLI"
+            ],
+            "done_when": [
+              "o workflow pode pausar e retomar apos aprovacao humana"
+            ],
+            "priority": "medium"
+          },
+          {
+            "id": "P1.4",
+            "action": "Introduzir paralelismo controlado apos geracao",
+            "details": "Executar validacao tecnica e seguranca em ramos distintos quando seguro, com agregacao final de findings.",
+            "target_files": [
+              "infra_agents/orchestration/langgraph.py",
+              "infra_agents/agents/validator.py",
+              "infra_agents/agents/security.py",
+              "infra_agents/orchestration/common.py"
+            ],
+            "outputs": [
+              "branch paralelo para validator e security",
+              "merge deterministico de findings"
+            ],
+            "done_when": [
+              "validator e security executam em paralelo sem alterar o resultado funcional esperado",
+              "a agregacao final mantem ordem e deduplicacao coerentes"
+            ],
+            "priority": "medium"
+          },
+          {
+            "id": "P1.5",
+            "action": "Separar subgraphs por fase de negocio",
+            "details": "Extrair subgraph de planeamento/geracao e subgraph de validacao/compliance para tornar o fluxo mais modular.",
+            "target_files": [
+              "infra_agents/orchestration/langgraph.py",
+              "infra_agents/orchestration/__init__.py"
+            ],
+            "outputs": [
+              "subgraph de authoring",
+              "subgraph de validation and compliance"
+            ],
+            "done_when": [
+              "cada subgraph pode ser testado isoladamente"
+            ],
+            "priority": "medium"
+          }
+        ]
+      },
+      {
+        "id": "P2",
+        "title": "Observabilidade e Auditoria",
+        "goal": "Ganhar visibilidade operacional suficiente para justificar LangGraph em producao.",
+        "operations": [
+          {
+            "id": "P2.1",
+            "action": "Enriquecer summary.json com telemetria por node",
+            "details": "Registar inicio, fim, duracao, tentativas, entradas e saidas resumidas por etapa.",
+            "target_files": [
+              "infra_agents/orchestration/common.py",
+              "infra_agents/orchestration/langgraph.py"
+            ],
+            "outputs": [
+              "history com metadata de execucao",
+              "duracao por node"
+            ],
+            "done_when": [
+              "cada step do grafo fica auditavel sem abrir logs internos"
+            ]
+          },
+          {
+            "id": "P2.2",
+            "action": "Adicionar tracing de prompts e artefactos com redaccao segura",
+            "details": "Guardar inputs/outputs necessarios para analise sem expor segredos nem payloads redundantes.",
+            "target_files": [
+              "infra_agents/agents/requirements.py",
+              "infra_agents/agents/planner.py",
+              "infra_agents/agents/generator.py",
+              "infra_agents/orchestration/common.py"
+            ],
+            "outputs": [
+              "artefactos de debug redigidos",
+              "melhor base para avaliacao offline"
+            ],
+            "done_when": [
+              "os jobs podem ser analisados posteriormente com risco baixo de fuga de dados"
+            ]
+          },
+          {
+            "id": "P2.3",
+            "action": "Criar metricas de qualidade por fase",
+            "details": "Medir taxa de sucesso, numero medio de iteracoes, falhas de validacao e taxa de bloqueio por politicas.",
+            "target_files": [
+              "scripts/evaluate_requirements_agent.py",
+              "scripts/export_finetune_dataset.py",
+              "infra_agents/orchestration/common.py"
+            ],
+            "outputs": [
+              "indicadores de qualidade e throughput",
+              "comparacao entre classic e langgraph"
+            ],
+            "done_when": [
+              "e possivel decidir com dados quando promover langgraph a default estavel"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "P3",
+        "title": "Adopcao Selectiva de LangChain",
+        "goal": "Introduzir apenas componentes de LangChain que removam codigo repetido ou desbloqueiem capacidades novas.",
+        "operations": [
+          {
+            "id": "P3.1",
+            "action": "Manter a interface AgentLLM como fronteira interna",
+            "details": "Se forem adicionados providers extra, criar adaptadores por tras de AgentLLM em vez de espalhar tipos LangChain pelo codigo todo.",
+            "target_files": [
+              "infra_agents/llm/base.py",
+              "infra_agents/llm/factory.py",
+              "infra_agents/llm/__init__.py"
+            ],
+            "outputs": [
+              "adaptadores opcionais para novos providers",
+              "baixo acoplamento ao framework"
+            ],
+            "done_when": [
+              "o core dos agentes continua independente de LangChain"
+            ],
+            "priority": "high"
+          },
+          {
+            "id": "P3.2",
+            "action": "Adoptar LangChain apenas para multi-provider ou structured output avancado",
+            "details": "Adicionar wrappers LangChain se houver OpenAI, Anthropic ou outros backends, mantendo compatibilidade com o modo replay.",
+            "target_files": [
+              "infra_agents/llm/factory.py",
+              "infra_agents/llm/",
+              "tests/test_llm_replay.py"
+            ],
+            "outputs": [
+              "providers opcionais",
+              "fallbacks configuraveis",
+              "preservacao do replay para testes"
+            ],
+            "done_when": [
+              "os agentes podem trocar de backend sem mudar a logica de negocio"
+            ],
+            "priority": "conditional"
+          },
+          {
+            "id": "P3.3",
+            "action": "Avaliar LangChain retrieval apenas se o RAG deixar de escalar",
+            "details": "Migrar para embeddings/vector store so quando o conjunto knowledge/*.md crescer em volume, diversidade e necessidade semantica.",
+            "target_files": [
+              "infra_agents/rag.py",
+              "infra_agents/knowledge/",
+              "tests/test_rag.py"
+            ],
+            "outputs": [
+              "benchmark entre retriever lexical actual e retriever semantico opcional"
+            ],
+            "done_when": [
+              "existem metricas que provam melhoria material na recuperacao"
+            ],
+            "priority": "conditional"
+          },
+          {
+            "id": "P3.4",
+            "action": "Nao adoptar LangChain Agents genericos no fluxo principal",
+            "details": "Preservar o desenho actual com agentes de negocio explicitos e guardrails locais, evitando agentes genericos com tool selection aberta.",
+            "target_files": [
+              "infra_agents/agents/",
+              "README.md"
+            ],
+            "outputs": [
+              "decisao de arquitectura documentada"
+            ],
+            "done_when": [
+              "a equipa mantem controlo sobre comportamento, auditabilidade e seguranca"
+            ],
+            "priority": "high"
+          }
+        ]
+      },
+      {
+        "id": "P4",
+        "title": "Promocao para Producao",
+        "goal": "Tornar LangGraph a engine preferencial sem regressao funcional.",
+        "operations": [
+          {
+            "id": "P4.1",
+            "action": "Executar rollout por feature flag",
+            "details": "Manter classic como fallback e activar LangGraph por configuracao, ambiente ou percentagem de jobs.",
+            "target_files": [
+              "infra_agents/orchestrator.py",
+              "infra_agents/cli.py",
+              "infra_agents/api.py"
+            ],
+            "outputs": [
+              "flag de rollout",
+              "telemetria por engine"
+            ],
+            "done_when": [
+              "e possivel reverter para classic sem alterar contratos externos"
+            ]
+          },
+          {
+            "id": "P4.2",
+            "action": "Adicionar testes de regressao especificos da runtime",
+            "details": "Cobrir pause/resume, retries, paralelismo, agregacao de findings e compatibilidade de summary.json.",
+            "target_files": [
+              "tests/test_orchestrator_engine.py",
+              "tests/test_pipeline.py"
+            ],
+            "outputs": [
+              "suite de regressao da runtime"
+            ],
+            "done_when": [
+              "LangGraph tem cobertura superior a classic nas funcionalidades novas"
+            ]
+          },
+          {
+            "id": "P4.3",
+            "action": "Definir criterio de corte para a engine classic",
+            "details": "So considerar descontinuacao da classic quando LangGraph estiver estavel, observavel e com rollback simples.",
+            "target_files": [
+              "README.md",
+              "infra_agents/orchestrator.py"
+            ],
+            "outputs": [
+              "criterios de deprecacao"
+            ],
+            "done_when": [
+              "existe uma checklist de saida aprovada"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "execution_graph_v2": {
+    "summary": "Fluxo recomendado para a runtime LangGraph apos adopcao faseada.",
+    "nodes": [
+      "requirements",
+      "planner",
+      "generator",
+      "validator",
+      "security",
+      "cost",
+      "approval_gate",
+      "finalize"
+    ],
+    "transitions": [
+      "requirements -> planner",
+      "planner -> generator",
+      "generator -> validator",
+      "generator -> security",
+      "validator + security -> approval_gate",
+      "approval_gate -> generator quando houver regeneracao aprovada",
+      "approval_gate -> cost quando o job estiver validado ou bloqueado",
+      "cost -> finalize"
+    ],
+    "interrupt_points": [
+      "apos findings criticos",
+      "apos falhas repetidas de validacao",
+      "antes de futuras operacoes de apply"
+    ]
+  },
+  "acceptance_criteria": [
+    "LangGraph passa a oferecer valor claro alem do fluxo linear actual",
+    "A engine classic continua disponivel como fallback durante a transicao",
+    "Nao existe acoplamento excessivo do core dos agentes a tipos LangChain",
+    "O resume de jobs funciona com consistencia",
+    "A observabilidade por node e suficiente para debug operacional",
+    "A adopcao opcional de LangChain e guiada por metricas e nao por preferencia tecnologica"
+  ],
+  "recommended_sequence": [
+    "P0 Baseline e Preparacao",
+    "P1 Aprofundar LangGraph",
+    "P2 Observabilidade e Auditoria",
+    "P3 Adopcao Selectiva de LangChain",
+    "P4 Promocao para Producao"
+  ],
+  "final_recommendation": {
+    "short_version": "Adoptar LangGraph agora, aprofundando checkpointing, resume, aprovacoes e observabilidade. Adiar LangChain como framework central; usa-lo apenas como detalhe de implementacao quando houver multi-provider, retrieval semantico ou structured output mais complexo.",
+    "why": [
+      "O projecto ja tem estrutura e contratos fortes",
+      "LangGraph encaixa no problema de orquestracao stateful",
+      "LangChain ainda nao resolve uma dor suficientemente grande no estado actual"
+    ]
+  }
+}

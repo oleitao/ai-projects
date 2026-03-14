@@ -8,10 +8,16 @@ Inclui um RAG local (baseado em ficheiros Markdown em `infra_agents/knowledge/`)
 Inclui também uma camada de geração estruturada por LLM (`infra_agents/llm/`), com suporte a `Ollama` local por defeito e `replay` para avaliação offline e fine-tuning incremental.
 
 O projeto suporta dois motores de orquestração:
-- `classic`: supervisor implementado em Python puro
-- `langgraph`: fluxo em grafo de estados com LangGraph/LangChain
+- `classic`: supervisor implementado em Python puro, simples e estável
+- `langgraph`: fluxo em grafo de estados com LangGraph, preparado para evolução stateful
 
-Por defeito (`engine=auto`), usa `langgraph` quando a dependência está instalada; caso contrário usa `classic`.
+Direção arquitetural atual (`project-v2.json`):
+- `langgraph` é a trajetória principal de evolução da runtime
+- `classic` mantém-se como fallback operacional durante a transição
+- `langchain-core` entra como dependência técnica do ecossistema LangGraph, não como framework central do domínio
+- LangChain só deve ser aprofundado quando existir uma necessidade clara de multi-provider, retrieval semântico ou tool-calling estruturado
+
+No estado atual do código, `engine=auto` usa `langgraph` quando a dependência está instalada; caso contrário usa `classic`.
 
 ## Objetivo
 
@@ -115,6 +121,105 @@ flowchart LR
     Q --> F
 ```
 
+## Estratégia V2
+
+Com base na análise do projeto e no workflow definido em `project-v2.json`, a recomendação de adoção é:
+- aprofundar `LangGraph` primeiro, porque o problema central é de orquestração stateful
+- manter a camada LLM atual (`AgentLLM`) como fronteira interna estável
+- adiar a adoção mais profunda de `LangChain` até haver uma necessidade comprovada
+
+Isto significa que o objetivo não é reescrever os agentes de negócio com abstrações genéricas, mas sim evoluir a runtime para suportar:
+- `checkpointing`
+- `resume` de jobs
+- `human-in-the-loop`
+- paralelismo controlado
+- retries por etapa
+- melhor observabilidade por node
+
+## Decisão sobre LangGraph e LangChain
+
+### LangGraph
+
+LangGraph é a escolha recomendada para a próxima fase do projeto porque encaixa diretamente na necessidade de:
+- gerir estado de execução entre agentes
+- modelar loops de regeneração com mais controlo
+- introduzir interrupções para aprovação humana
+- suportar branching e eventual execução paralela de validação e segurança
+- acrescentar durabilidade operacional sem mudar o contrato funcional dos agentes
+
+### LangChain
+
+LangChain não é a abstração central recomendada para este projeto neste momento.
+
+Uso recomendado, apenas quando necessário:
+- adaptadores opcionais para múltiplos providers LLM
+- structured output avançado quando a camada atual deixar de ser suficiente
+- retrieval semântico, embeddings ou vector store quando o RAG lexical local deixar de escalar
+
+Uso não recomendado neste estágio:
+- substituir os agentes atuais por LangChain Agents genéricos
+- espalhar tipos e contratos de LangChain por todo o core do projeto
+- trocar o retriever local atual sem evidência de ganho mensurável
+
+## Roadmap de adoção
+
+O plano definido em `project-v2.json` organiza a evolução em cinco fases:
+
+### P0. Baseline e preparação
+
+- congelar o comportamento atual com testes de equivalência entre `classic` e `langgraph`
+- tornar o contrato de estado do workflow mais explícito
+- alinhar documentação e instalação com a estratégia de adoção
+
+### P1. Aprofundar LangGraph
+
+- adicionar `checkpointing` e `resume`
+- modelar retries e timeouts por node
+- criar pontos de `human-in-the-loop`
+- introduzir paralelismo controlado entre validação e segurança
+- separar subgraphs por fase de negócio
+
+### P2. Observabilidade e auditoria
+
+- enriquecer `summary.json` com telemetria por etapa
+- adicionar tracing seguro de prompts e artefactos
+- medir qualidade operacional por engine e por fase
+
+### P3. Adoção seletiva de LangChain
+
+- manter `AgentLLM` como fronteira interna
+- introduzir LangChain apenas atrás de adaptadores opcionais
+- avaliar retrieval mais sofisticado só quando houver dados e métricas que o justifiquem
+
+### P4. Promoção para produção
+
+- fazer rollout por feature flag
+- reforçar testes de regressão específicos da runtime
+- manter `classic` como fallback até LangGraph estar comprovadamente estável
+
+## Workflow alvo da runtime
+
+O workflow alvo da versão V2 passa a assumir `LangGraph` como engine principal evolutiva:
+
+```mermaid
+flowchart LR
+    A[Prompt] --> B[Requirements]
+    B --> C[Planner]
+    C --> D[Generator]
+    D --> E[Validator]
+    D --> F[Security]
+    E --> G[Approval Gate]
+    F --> G
+    G -->|Regenerar| D
+    G -->|Validado ou blocked| H[Cost]
+    H --> I[Finalize]
+```
+
+Pontos de interrupção previstos:
+- após findings críticos
+- após falhas repetidas de validação
+- antes de futuras operações de `apply`
+
 ## AWS Scope do scaffold
 
 O scaffold está adaptado para AWS com:
@@ -167,7 +272,7 @@ O scaffold está adaptado para AWS com:
   - `trivy`
   - `infracost`
 - `tfsec` é suportado apenas como fallback quando `trivy` não está instalado
-- Dependências opcionais para engine LangGraph:
+- Dependências opcionais para runtime LangGraph:
   - `langgraph`
   - `langchain-core`
 
@@ -187,11 +292,15 @@ Ferramentas de validação/custo no macOS com Homebrew:
 brew install tflint checkov trivy infracost
 ```
 
-Para ativar orquestração com LangGraph:
+Para ativar a runtime com LangGraph:
 
 ```bash
 pip install -e .[langgraph]
 ```
+
+Nota de arquitetura:
+- `langchain-core` é instalado aqui porque faz parte do ecossistema LangGraph adotado neste projeto
+- isso não significa que o domínio da aplicação passe a depender de LangChain como abstração principal
 
 ## Execução via CLI
 
@@ -440,8 +549,10 @@ Cada execução cria `jobs/<job_id>/` com artefactos como:
 ## Testes
 
 ```bash
-python -m pytest
+PYTHONPATH=. pytest -q
 ```
+
+Este é o comando de baseline usado na análise V2. Se preferires `python -m pytest`, instala primeiro o pacote no ambiente com `pip install -e .`.
 
 ## Limitações atuais (MVP)
 
