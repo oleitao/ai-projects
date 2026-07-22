@@ -1,36 +1,36 @@
 # AI Agents for AWS Terraform Generation
 
-Plataforma de geração de Infrastructure as Code (Terraform) para AWS baseada em pipeline multi-agente.
+Infrastructure as Code (Terraform) generation platform for AWS based on a multi-agent pipeline.
 
-A aplicação recebe um prompt em linguagem natural, transforma-o numa `spec.json` estruturada, gera artefactos Terraform (`main.tf`, `variables.tf`, `outputs.tf`, `providers.tf`, `backend.tf`) e executa validações/políticas para entregar um resultado auditável (`summary.json` + relatórios).
+The application receives a natural language prompt, transforms it into a structured `spec.json`, generates Terraform artifacts (`main.tf`, `variables.tf`, `outputs.tf`, `providers.tf`, `backend.tf`) and runs validations/policies to deliver an auditable result (`summary.json` + reports).
 
-Inclui um RAG local (baseado em ficheiros Markdown em `infra_agents/knowledge/`) para melhorar consistência técnica nos agentes de `Requisitos`, `Planeador` e `Gerador`.
-Inclui também uma camada de geração estruturada por LLM (`infra_agents/llm/`), com suporte a `Ollama` local por defeito e `replay` para avaliação offline e fine-tuning incremental.
+It includes a local RAG (based on Markdown files in `infra_agents/knowledge/`) to improve technical consistency across the `Requirements`, `Planner`, and `Generator` agents.
+It also includes a structured LLM generation layer (`infra_agents/llm/`), with support for local `Ollama` by default and `replay` for offline evaluation and incremental fine-tuning.
 
-O projeto suporta dois motores de orquestração:
-- `classic`: supervisor implementado em Python puro
-- `langgraph`: fluxo em grafo de estados com LangGraph/LangChain
+The project supports two orchestration engines:
+- `classic`: supervisor implemented in pure Python
+- `langgraph`: state-graph flow with LangGraph/LangChain
 
-Por defeito (`engine=auto`), usa `langgraph` quando a dependência está instalada; caso contrário usa `classic`.
+By default (`engine=auto`), it uses `langgraph` when the dependency is installed; otherwise it uses `classic`.
 
-## Objetivo
+## Purpose
 
-Este projeto implementa um MVP de orquestração por agentes para:
-- converter prompt em `spec.json` estruturado
-- gerar design e código Terraform AWS
-- validar com ferramentas reais (quando disponíveis)
-- aplicar políticas de segurança
-- produzir resumo final do job e relatórios
+This project implements an agent-orchestration MVP to:
+- convert a prompt into a structured `spec.json`
+- generate AWS Terraform design and code
+- validate with real tools (when available)
+- apply security policies
+- produce a final job summary and reports
 
-## Diagrama da infraestrutura
+## Infrastructure diagram
 
 ```mermaid
 flowchart TB
-    User[Prompt em linguagem natural] --> Pipeline[Pipeline multi-agente]
-    Pipeline --> TF[Terraform gerado]
+    User[Natural language prompt] --> Pipeline[Multi-agent pipeline]
+    Pipeline --> TF[Generated Terraform]
 
-    subgraph AWS[AWS Account / Região]
-        Backend[S3 backend remoto]
+    subgraph AWS[AWS Account / Region]
+        Backend[Remote S3 backend]
         Lock[DynamoDB lock table]
 
         subgraph Network[VPC]
@@ -48,10 +48,10 @@ flowchart TB
         end
 
         subgraph Data[Data]
-            RDS[RDS Postgres/MySQL\nMulti-AZ opcional]
+            RDS[RDS Postgres/MySQL\nOptional Multi-AZ]
         end
 
-        IAM[IAM role mínima]
+        IAM[Minimal IAM role]
         CW[CloudWatch / logs]
     end
 
@@ -75,105 +75,105 @@ flowchart TB
     PubB --> NAT
 ```
 
-## Arquitetura dos agentes
+## Agent architecture
 
-Ordem de execução no supervisor:
-1. `Requisitos`
-2. `Planeador de Arquitetura`
-3. `Gerador Terraform`
-4. `Validador/QA`
-5. `Segurança/Políticas`
-6. `Custos`
+Execution order in the supervisor:
+1. `Requirements`
+2. `Architecture Planner`
+3. `Terraform Generator`
+4. `Validator/QA`
+5. `Security/Policies`
+6. `Costs`
 
-O supervisor faz loop controlado de correção (`max_iterations`) entre geração e validação.
+The supervisor runs a controlled correction loop (`max_iterations`) between generation and validation.
 
-## Diagrama do workflow
+## Workflow diagram
 
 ```mermaid
 flowchart LR
-    A[Prompt] --> B[Requisitos]
+    A[Prompt] --> B[Requirements]
     B --> C[spec.json]
-    C --> D[Planeador de Arquitetura]
+    C --> D[Architecture Planner]
     D --> E[design.md]
-    E --> F[Gerador Terraform]
-    F --> G[Artefactos .tf]
-    G --> H[Validador / QA]
-    H --> I{Existem erros?}
-    I -- Sim --> J[Regenerar]
+    E --> F[Terraform Generator]
+    F --> G[.tf Artifacts]
+    G --> H[Validator / QA]
+    H --> I{Errors present?}
+    I -- Yes --> J[Regenerate]
     J --> F
-    I -- Não --> K[Segurança / Políticas]
+    I -- No --> K[Security / Policies]
     K --> L{Blocking issue?}
-    L -- Sim --> M[Job blocked]
-    L -- Não --> N[Custos]
+    L -- Yes --> M[Job blocked]
+    L -- No --> N[Costs]
     N --> O[summary.json + reports]
 
-    P[RAG local\nknowledge/*.md] --> B
+    P[Local RAG\nknowledge/*.md] --> B
     P --> D
     P --> F
-    Q[LLM estruturado\nReplay / Ollama] --> B
+    Q[Structured LLM\nReplay / Ollama] --> B
     Q --> D
     Q --> F
 ```
 
-## AWS Scope do scaffold
+## AWS Scope of the scaffold
 
-O scaffold está adaptado para AWS com:
-- provider `hashicorp/aws` (`~> 5.0`)
-- backend remoto `s3` + lock `dynamodb` (`backend.hcl.example`)
-- verificação opcional de conta AWS (`expected_account_id`)
-- VPC com subnets públicas/privadas, NAT e VPC Flow Logs
-- KMS key dedicada para logs/observability quando `log_kms_key_id` não é fornecido
-- IAM role mínima por runtime (`ecs`, `eks`, `ec2`) com separação entre task role e execution role no caso de ECS
-- recursos de compute base:
-  - `ecs`: cluster com Container Insights + `task_definition` + `service` Fargate
-  - `ec2`: launch template + autoscaling group (quando `autoscaling=true`)
-  - `eks`: placeholder controlado para extensão na próxima iteração
-- RDS com `manage_master_user_password = true`, IAM auth, enhanced monitoring e Performance Insights com KMS
-- outputs principais de conta/região/rede/iam/database
+The scaffold is adapted for AWS with:
+- `hashicorp/aws` provider (`~> 5.0`)
+- remote `s3` backend + `dynamodb` lock (`backend.hcl.example`)
+- optional AWS account verification (`expected_account_id`)
+- VPC with public/private subnets, NAT, and VPC Flow Logs
+- dedicated KMS key for logs/observability when `log_kms_key_id` is not provided
+- minimal IAM role per runtime (`ecs`, `eks`, `ec2`) with separation between task role and execution role in the case of ECS
+- base compute resources:
+  - `ecs`: cluster with Container Insights + `task_definition` + Fargate `service`
+  - `ec2`: launch template + autoscaling group (when `autoscaling=true`)
+  - `eks`: controlled placeholder for extension in the next iteration
+- RDS with `manage_master_user_password = true`, IAM auth, enhanced monitoring, and Performance Insights with KMS
+- main account/region/network/iam/database outputs
 
-## RAG local
+## Local RAG
 
-- Fonte de conhecimento: `infra_agents/knowledge/*.md`
-- Retriever lexical local: `infra_agents/rag.py`
-- Agentes que usam RAG: `requirements`, `planner`, `generator`
-- Transparência por job:
+- Knowledge source: `infra_agents/knowledge/*.md`
+- Local lexical retriever: `infra_agents/rag.py`
+- Agents that use RAG: `requirements`, `planner`, `generator`
+- Per-job transparency:
   - `reports/rag_requirements.md`
   - `reports/rag_planner.md`
   - `reports/rag_generator.md`
-  - `summary.json` inclui `history` com `metadata.rag_sources`
+  - `summary.json` includes `history` with `metadata.rag_sources`
 
-## Estrutura
+## Structure
 
-- `infra_agents/contracts.py`: contrato entre agentes e validação da spec
-- `infra_agents/orchestrator.py`: facade de seleção de engine
-- `infra_agents/orchestration/`: implementações `classic` e `langgraph`
-- `infra_agents/agents/`: agentes (`requirements`, `planner`, `generator`, `validator`, `security`, `cost`)
-- `infra_agents/llm/`: interface LLM, integração Ollama, factory por ambiente e replay backend
-- `infra_agents/tools/`: wrappers para filesystem e comandos CLI
-- `infra_agents/knowledge/`: base local de referências/padrões
-- `examples/prompt.txt`: prompt de exemplo
-- `scripts/export_finetune_dataset.py`: exporta dataset JSONL a partir de jobs concluídos
-- `scripts/evaluate_requirements_agent.py`: avaliação offline do agente de requisitos
-- `datasets/README.md`: formato de dataset e fluxo de treino/avaliação
-- `tests/`: testes unitários e de pipeline
+- `infra_agents/contracts.py`: contract between agents and spec validation
+- `infra_agents/orchestrator.py`: engine selection facade
+- `infra_agents/orchestration/`: `classic` and `langgraph` implementations
+- `infra_agents/agents/`: agents (`requirements`, `planner`, `generator`, `validator`, `security`, `cost`)
+- `infra_agents/llm/`: LLM interface, Ollama integration, environment-based factory, and replay backend
+- `infra_agents/tools/`: wrappers for filesystem and CLI commands
+- `infra_agents/knowledge/`: local base of references/patterns
+- `examples/prompt.txt`: example prompt
+- `scripts/export_finetune_dataset.py`: exports a JSONL dataset from completed jobs
+- `scripts/evaluate_requirements_agent.py`: offline evaluation of the requirements agent
+- `datasets/README.md`: dataset format and training/evaluation flow
+- `tests/`: unit and pipeline tests
 
-## Pré-requisitos
+## Prerequisites
 
 - Python `>= 3.11`
-- Terraform CLI (opcional mas recomendado)
-- Ferramentas opcionais de validação/custo:
+- Terraform CLI (optional but recommended)
+- Optional validation/cost tools:
   - `tflint`
   - `checkov`
   - `trivy`
   - `infracost`
-- `tfsec` é suportado apenas como fallback quando `trivy` não está instalado
-- Dependências opcionais para engine LangGraph:
+- `tfsec` is supported only as a fallback when `trivy` is not installed
+- Optional dependencies for the LangGraph engine:
   - `langgraph`
   - `langchain-core`
 
-Se as ferramentas não estiverem instaladas, o pipeline continua e regista `warning` no relatório.
+If the tools are not installed, the pipeline continues and logs a `warning` in the report.
 
-## Instalação
+## Installation
 
 ```bash
 python -m venv .venv
@@ -181,138 +181,138 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-Ferramentas de validação/custo no macOS com Homebrew:
+Validation/cost tools on macOS with Homebrew:
 
 ```bash
 brew install tflint checkov trivy infracost
 ```
 
-Para ativar orquestração com LangGraph:
+To enable orchestration with LangGraph:
 
 ```bash
 pip install -e .[langgraph]
 ```
 
-## Execução via CLI
+## Running via CLI
 
-Com prompt em ficheiro:
+With a prompt file:
 
 ```bash
 python -m infra_agents.cli --prompt-file examples/prompt.txt
 ```
 
-Este comando foi validado com sucesso no estado atual do projeto usando o Ollama local por defeito.
-Pré-requisito operacional: o daemon do Ollama deve estar acessível em `http://localhost:11434` e ter o modelo `llama3.2:latest` disponível.
+This command has been successfully validated in the project's current state using local Ollama by default.
+Operational prerequisite: the Ollama daemon must be accessible at `http://localhost:11434` and have the `llama3.2:latest` model available.
 
-Com prompt inline:
+With an inline prompt:
 
 ```bash
-python -m infra_agents.cli --prompt "AWS prod em eu-west-1 com ECS e RDS postgres"
+python -m infra_agents.cli --prompt "AWS prod in eu-west-1 with ECS and RDS postgres"
 ```
 
-Comandos via entrypoints:
+Commands via entrypoints:
 
 ```bash
 infra-agents --prompt-file examples/prompt.txt
 ```
 
-Parâmetros úteis:
+Useful parameters:
 - `--output-dir` (default: `jobs`)
 - `--max-iterations` (default: `3`)
-- `--execution-mode` (atual: apenas `plan-only`)
+- `--execution-mode` (current: `plan-only` only)
 - `--engine` (`auto`, `classic`, `langgraph`)
 - `--validation-mode` (`auto`, `credentialless`)
 
-Modo `auto`:
-- executa `terraform fmt`, `terraform init -backend=false`, `terraform validate`
-- tenta ainda `terraform plan` num workspace temporário local, sem `backend.tf`
-- reutiliza `.terraform` e `.terraform.lock.hcl` quando disponíveis para acelerar a validação
-- executa scanners locais:
+`auto` mode:
+- runs `terraform fmt`, `terraform init -backend=false`, `terraform validate`
+- also attempts `terraform plan` in a local temporary workspace, without `backend.tf`
+- reuses `.terraform` and `.terraform.lock.hcl` when available to speed up validation
+- runs local scanners:
   - `tflint --init`
   - `tflint`
   - `checkov -d . --download-external-modules true --skip-path .external_modules`
-  - `trivy config ... --skip-dirs .external_modules` quando disponível, ou `tfsec .` como fallback
-- erros de ambiente como falta de profile AWS/credenciais são tratados como `warning`
+  - `trivy config ... --skip-dirs .external_modules` when available, or `tfsec .` as a fallback
+- environment errors such as missing AWS profile/credentials are treated as `warning`
 
-Modo `credentialless`:
-- executa `terraform fmt`, `terraform init -backend=false` e `terraform validate`
-- regista `terraform plan` como `skipped` no relatório de validação
-- serve para validar coerência estrutural do Terraform sem depender de credenciais AWS locais
+`credentialless` mode:
+- runs `terraform fmt`, `terraform init -backend=false`, and `terraform validate`
+- logs `terraform plan` as `skipped` in the validation report
+- used to validate the structural coherence of the Terraform without depending on local AWS credentials
 
 ## Fine-Tuning Readiness
 
-Esta implementação separa claramente:
-- guardrails e validações baseadas em regras (`terraform validate`, scanners, policy gates)
-- decisões de geração estruturada por LLM (onde fine-tuning pode ajudar)
+This implementation clearly separates:
+- rule-based guardrails and validations (`terraform validate`, scanners, policy gates)
+- LLM-based structured generation decisions (where fine-tuning can help)
 
-O fine-tuning deve atuar apenas nos hooks LLM dos agentes abaixo:
-- `RequirementsAgent` -> tarefa `requirements_spec_v1`
-- `ArchitecturePlannerAgent` -> tarefa `planner_design_v1`
-- `TerraformGeneratorAgent` -> tarefa `generator_overrides_v1`
+Fine-tuning should act only on the LLM hooks of the agents below:
+- `RequirementsAgent` -> task `requirements_spec_v1`
+- `ArchitecturePlannerAgent` -> task `planner_design_v1`
+- `TerraformGeneratorAgent` -> task `generator_overrides_v1`
 
-### Fluxo completo recomendado
+### Recommended full flow
 
-### 1) Gerar dados de treino a partir de jobs reais
+### 1) Generate training data from real jobs
 
-Executa o pipeline em cenários reais e exporta dataset:
+Run the pipeline on real scenarios and export the dataset:
 
 ```bash
 python scripts/export_finetune_dataset.py --jobs-dir jobs --output datasets/finetune_train.jsonl
 ```
 
-O export cria exemplos JSONL com:
+The export creates JSONL examples with:
 - `task`
-- `input` (prompt + contexto útil)
-- `output` (label estruturada)
+- `input` (prompt + useful context)
+- `output` (structured label)
 
-### 2) Curar dados antes do treino
+### 2) Curate data before training
 
-Antes de treinar, valida manualmente:
-- remover prompts com ambiguidades mal resolvidas
-- remover labels incorretas ou inconsistentes
-- garantir distribuição por `env` (`dev/staging/prod`), `region`, `compute.type`, `data.engine`
-- garantir que não há segredos nem dados sensíveis
+Before training, manually validate:
+- remove prompts with poorly resolved ambiguities
+- remove incorrect or inconsistent labels
+- ensure distribution across `env` (`dev/staging/prod`), `region`, `compute.type`, `data.engine`
+- ensure there are no secrets or sensitive data
 
-Recomendação prática:
-- manter 10%-20% dos exemplos para validação (`finetune_val.jsonl`)
-- não misturar exemplos de baixa qualidade na fase inicial
+Practical recommendation:
+- keep 10%-20% of the examples for validation (`finetune_val.jsonl`)
+- do not mix low-quality examples in the initial phase
 
-### 3) Definir objetivo por tarefa (não treinar “tudo junto” sem controlo)
+### 3) Define an objective per task (do not train "everything together" without control)
 
-Objetivo por task:
-- `requirements_spec_v1`: melhorar parsing de prompt -> spec
-- `planner_design_v1`: melhorar seleção de módulos/notas mantendo allowlist
-- `generator_overrides_v1`: apenas recomendações de `tfvars_overrides` permitidos
+Objective per task:
+- `requirements_spec_v1`: improve prompt -> spec parsing
+- `planner_design_v1`: improve module/notes selection while keeping the allowlist
+- `generator_overrides_v1`: only allowed `tfvars_overrides` recommendations
 
-Importante:
-- guardrails de segurança continuam baseados em regras
-- fine-tuning não substitui `terraform validate`, `tflint`, `checkov` e `trivy`
+Important:
+- security guardrails remain rule-based
+- fine-tuning does not replace `terraform validate`, `tflint`, `checkov`, and `trivy`
 
-### 4) Medir baseline antes de treinar
+### 4) Measure a baseline before training
 
-Hoje já existe avaliação offline para `requirements_spec_v1`:
+There is already offline evaluation for `requirements_spec_v1`:
 
 ```bash
 python scripts/evaluate_requirements_agent.py --dataset datasets/finetune_train.jsonl
 ```
 
-Guarda estas métricas como baseline para comparar com modelo fine-tuned.
+Save these metrics as a baseline to compare against the fine-tuned model.
 
-### 5) Treinar modelo externamente
+### 5) Train the model externally
 
-O treino é feito fora deste repositório (na plataforma/model provider da tua escolha), usando o JSONL exportado.
+Training is done outside this repository (on the platform/model provider of your choice), using the exported JSONL.
 
-Quando tiveres um modelo treinado:
-- mantém output estritamente estruturado por tarefa
-- evita permitir texto livre sem schema
-- versiona modelo e dataset (ex: `model_v1`, `dataset_2026-03-01`)
+Once you have a trained model:
+- keep output strictly structured per task
+- avoid allowing free text without a schema
+- version the model and dataset (e.g., `model_v1`, `dataset_2026-03-01`)
 
-### 6) Integrar sem risco (rollout controlado)
+### 6) Integrate without risk (controlled rollout)
 
-No runtime atual, os agentes usam por defeito o Ollama local em `http://localhost:11434` com modelo `llama3.2:latest`.
-Se o serviço não estiver disponível, se o modelo falhar, ou se devolver JSON inválido, a execução falha explicitamente.
+In the current runtime, agents use local Ollama by default at `http://localhost:11434` with the `llama3.2:latest` model.
+If the service is unavailable, if the model fails, or if it returns invalid JSON, execution fails explicitly.
 
-Para simular modelo fine-tuned localmente, usa replay:
+To simulate a fine-tuned model locally, use replay:
 
 ```bash
 export INFRA_AGENTS_LLM_MODE=replay
@@ -320,7 +320,7 @@ export INFRA_AGENTS_LLM_REPLAY_FILE=datasets/finetune_train.jsonl
 python -m infra_agents.cli --prompt-file examples/prompt.txt --engine classic
 ```
 
-Para explicitar a configuração default do Ollama:
+To make the default Ollama configuration explicit:
 
 ```bash
 export INFRA_AGENTS_LLM_MODE=ollama
@@ -330,71 +330,71 @@ export INFRA_AGENTS_LLM_TEMPERATURE=0
 python -m infra_agents.cli --prompt-file examples/prompt.txt --engine classic
 ```
 
-Variáveis suportadas no modo `ollama`:
+Supported variables in `ollama` mode:
 - `INFRA_AGENTS_LLM_BASE_URL`
 - `INFRA_AGENTS_LLM_MODEL`
 - `INFRA_AGENTS_LLM_TIMEOUT` (default `60`)
 - `INFRA_AGENTS_LLM_TEMPERATURE` (default `0`)
 
-O provider envia o schema JSON de cada tarefa ao Ollama e exige resposta em JSON puro, mantendo a mesma interface:
+The provider sends each task's JSON schema to Ollama and requires a pure JSON response, keeping the same interface:
 - `generate_structured(request: LLMRequest) -> dict`
 
-Agentes que usam LLM/Ollama no runtime atual:
+Agents that use LLM/Ollama in the current runtime:
 - `RequirementsAgent`
 - `ArchitecturePlannerAgent`
 - `TerraformGeneratorAgent`
 
-Agentes que não usam LLM/Ollama:
+Agents that do not use LLM/Ollama:
 - `ValidatorAgent`
 - `SecurityPolicyAgent`
 - `CostAgent`
 
-Nota operacional:
-- o Ollama é o modo default quando `INFRA_AGENTS_LLM_MODE` não está definido
-- se o modelo falhar ou devolver JSON inválido, o pipeline termina com erro
-- `RequirementsAgent` rejeita specs do LLM inválidas ou inconsistentes com os campos críticos do prompt
-- `RequirementsAgent` normaliza payloads parciais do LLM com defaults válidos, incluindo topologia mínima de subnets
-- `ArchitecturePlannerAgent` só aceita módulos LLM compatíveis com o runtime pedido
-- `TerraformGeneratorAgent` só aplica overrides permitidos e contextualizados ao workload
-- o estado por execução fica visível em `summary.json` através de `history[].metadata.llm_used`
+Operational note:
+- Ollama is the default mode when `INFRA_AGENTS_LLM_MODE` is not set
+- if the model fails or returns invalid JSON, the pipeline terminates with an error
+- `RequirementsAgent` rejects LLM specs that are invalid or inconsistent with the prompt's critical fields
+- `RequirementsAgent` normalizes partial LLM payloads with valid defaults, including minimal subnet topology
+- `ArchitecturePlannerAgent` only accepts LLM modules compatible with the requested runtime
+- `TerraformGeneratorAgent` only applies overrides that are allowed and contextualized to the workload
+- per-run state is visible in `summary.json` via `history[].metadata.llm_used`
 
-### 7) Validar pós-rollout
+### 7) Validate post-rollout
 
-Após integrar modelo real:
-- correr testes do repositório
-- executar pipeline em prompts de regressão
-- comparar métricas com baseline
-- inspecionar `summary.json` (`history[].metadata.llm_used`, `rag_sources`, `tfvars_overrides`)
+After integrating the real model:
+- run the repository's tests
+- run the pipeline on regression prompts
+- compare metrics against the baseline
+- inspect `summary.json` (`history[].metadata.llm_used`, `rag_sources`, `tfvars_overrides`)
 
-### 8) Estratégia de rollback
+### 8) Rollback strategy
 
-Se houver regressão:
-- corrige a configuração do Ollama ou muda temporariamente para `INFRA_AGENTS_LLM_MODE=replay`
-- valida de novo a suite antes de voltar a usar o modo live
+If there is a regression:
+- fix the Ollama configuration or temporarily switch to `INFRA_AGENTS_LLM_MODE=replay`
+- validate the suite again before returning to live mode
 
-Isto mantém a pipeline sempre dependente de geração estruturada por modelo.
+This keeps the pipeline always dependent on structured model generation.
 
-## Execução via API
+## Running via API
 
-Iniciar API local:
+Start local API:
 
 ```bash
 python -m infra_agents.api
 ```
 
-Criar job:
+Create a job:
 
 ```bash
 curl -X POST http://127.0.0.1:8080/jobs \
   -H 'content-type: application/json' \
-  -d '{"prompt":"AWS prod eu-west-1 com ECS e RDS"}'
+  -d '{"prompt":"AWS prod eu-west-1 with ECS and RDS"}'
 ```
 
-A resposta inclui `job_id`, `status`, `workspace`, `summary_file` e `engine`.
+The response includes `job_id`, `status`, `workspace`, `summary_file`, and `engine`.
 
-## Outputs do job
+## Job outputs
 
-Cada execução cria `jobs/<job_id>/` com artefactos como:
+Each run creates `jobs/<job_id>/` with artifacts such as:
 - `spec.json`
 - `design.md`
 - `main.tf`, `variables.tf`, `outputs.tf`, `providers.tf`, `versions.tf`
@@ -402,53 +402,53 @@ Cada execução cria `jobs/<job_id>/` com artefactos como:
 - `reports/validation.json`
 - `reports/security.json`
 - `reports/cost.json`
-- `reports/infracost.json` (quando o `infracost` está configurado)
+- `reports/infracost.json` (when `infracost` is configured)
 - `summary.json`
 
-## Guardrails implementados
+## Implemented guardrails
 
-- allowlist de provider: apenas `aws`
-- backend remoto obrigatório com `s3`
-- verificação de configuração de lock DynamoDB no backend example
-- execução em `plan-only`
-- validação `auto` com `terraform plan` local sem backend remoto
-- validação `credentialless` para coerência estrutural sem credenciais AWS
-- scanner de IaC com `checkov` e `trivy` (ou `tfsec` como fallback)
-- exclusão de `.external_modules` no scan para evitar ruído de exemplos internos dos módulos descarregados
-- deteção de padrões inseguros:
-  - acesso público explícito
-  - credenciais hardcoded
-  - encriptação desativada
-  - IMDSv2 opcional (bloqueado)
-- endurecimento do scaffold gerado:
-  - CloudWatch Log Group com retenção de 365 dias e KMS
-  - VPC Flow Logs ativos
-  - ECS com `readonlyRootFilesystem = true`
-  - roles separadas para ECS execution e runtime
-  - RDS com `iam_database_authentication_enabled = true`
-  - RDS com `auto_minor_version_upgrade = true`
-  - RDS com enhanced monitoring e Performance Insights em KMS
-  - security group com egress reduzido a HTTPS interno/S3 prefix list
+- provider allowlist: `aws` only
+- mandatory remote backend with `s3`
+- DynamoDB lock configuration check in the backend example
+- `plan-only` execution
+- `auto` validation with local `terraform plan` without a remote backend
+- `credentialless` validation for structural coherence without AWS credentials
+- IaC scanning with `checkov` and `trivy` (or `tfsec` as a fallback)
+- exclusion of `.external_modules` from the scan to avoid noise from downloaded modules' internal examples
+- detection of insecure patterns:
+  - explicit public access
+  - hardcoded credentials
+  - disabled encryption
+  - optional IMDSv2 (blocked)
+- hardening of the generated scaffold:
+  - CloudWatch Log Group with 365-day retention and KMS
+  - active VPC Flow Logs
+  - ECS with `readonlyRootFilesystem = true`
+  - separate roles for ECS execution and runtime
+  - RDS with `iam_database_authentication_enabled = true`
+  - RDS with `auto_minor_version_upgrade = true`
+  - RDS with enhanced monitoring and Performance Insights on KMS
+  - security group with egress restricted to internal HTTPS/S3 prefix list
 
-## Estados possíveis do job
+## Possible job states
 
-- `validated`: validação concluída sem erros bloqueantes
-- `blocked`: bloqueado por políticas de segurança (severity `critical`)
-- `failed`: erros de validação após esgotar iterações
-- `done`: finalizado sem necessidade de validação adicional
+- `validated`: validation completed with no blocking errors
+- `blocked`: blocked by security policies (severity `critical`)
+- `failed`: validation errors after exhausting iterations
+- `done`: finished with no additional validation needed
 
-## Testes
+## Tests
 
 ```bash
 python -m pytest
 ```
 
-## Limitações atuais (MVP)
+## Current limitations (MVP)
 
-- EKS ainda está como placeholder de integração
-- em modo `auto`, `terraform plan` continua a depender de provider/plugins e de credenciais/profile AWS válidos
-- em modo `credentialless`, não há `terraform plan`; valida apenas coerência estrutural local
-- o passo de custos cai para heurística quando `infracost` não tem `INFRACOST_API_KEY` ou `~/.config/infracost/credentials.yml`
-- os scanners podem continuar a reportar findings reais do Terraform gerado; isso é esperado e faz parte do loop de correção do supervisor
-- não executa `terraform apply`
-- não integra OPA/Conftest nem catálogo interno de módulos ainda
+- EKS is still an integration placeholder
+- in `auto` mode, `terraform plan` still depends on the provider/plugins and valid AWS credentials/profile
+- in `credentialless` mode, there is no `terraform plan`; it validates only local structural coherence
+- the cost step falls back to a heuristic when `infracost` has no `INFRACOST_API_KEY` or `~/.config/infracost/credentials.yml`
+- scanners may continue reporting real findings from the generated Terraform; this is expected and part of the supervisor's correction loop
+- does not run `terraform apply`
+- does not yet integrate OPA/Conftest or an internal module catalog
